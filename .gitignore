@@ -5,6 +5,7 @@ data/paper/*.jpg
 
 # 모델 파일 (용량 큼)
 models/*.tflite
+!models/RPS_MobileNetV2_Augmentation.tflite
 
 # Python
 __pycache__/
