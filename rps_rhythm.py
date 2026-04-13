@@ -3,8 +3,9 @@ RPS Rhythm - 가위바위보 리듬 게임
 화면에 표시되는 가위/바위/보 시퀀스를 기억했다가, 박자에 맞춰 카메라에 보여주세요!
 
 사용법:
-  python rps_rhythm.py                          (기존 모델 사용)
-  python rps_rhythm.py --model models/rps_mobilenetv2.tflite  (직접 학습한 모델)
+  python rps_rhythm.py                          (기존 TFLite 모델 사용)
+  python rps_rhythm.py --model models/rps_mobilenetv2.tflite  (직접 학습한 TFLite 모델)
+  python rps_rhythm.py --model models/best.onnx            (ONNX YOLO 모델 사용)
 
 조작:
   SPACE → 게임 시작 / 재시작
@@ -24,6 +25,11 @@ import numpy as np
 import cv2
 from cvzone.HandTrackingModule import HandDetector
 from ai_edge_litert.interpreter import Interpreter
+
+try:
+    from ultralytics import YOLO
+except ImportError:
+    YOLO = None
 
 # ══════════════════════════════════════════════
 #  상수 & 설정
@@ -74,12 +80,20 @@ STAGES = [
 class RPSDetector:
     def __init__(self, model_path):
         self.hd = HandDetector(maxHands=1, detectionCon=0.7)
+        self.model_path = model_path
+        self.is_onnx = model_path.lower().endswith('.onnx')
 
-        self.interpreter = Interpreter(model_path=model_path)
-        self.interpreter.allocate_tensors()
-        self.input_details = self.interpreter.get_input_details()
-        self.output_details = self.interpreter.get_output_details()
-        self.input_dtype = self.input_details[0]['dtype']
+        if self.is_onnx:
+            if YOLO is None:
+                raise ImportError('Ultralytics YOLO is required for ONNX models. Install with "pip install ultralytics".')
+            self.model = YOLO(model_path, task='detect')
+            self.names = {int(k): v.lower() for k, v in self.model.names.items()}
+        else:
+            self.interpreter = Interpreter(model_path=model_path)
+            self.interpreter.allocate_tensors()
+            self.input_details = self.interpreter.get_input_details()
+            self.output_details = self.interpreter.get_output_details()
+            self.input_dtype = self.input_details[0]['dtype']
 
     def make_square_img(self, img):
         ho, wo = img.shape[0], img.shape[1]
@@ -102,6 +116,26 @@ class RPSDetector:
         """프레임에서 손을 감지하고 RPS 분류 결과 반환
         Returns: (gesture_name, confidence, bbox) or (None, 0, None)
         """
+        if self.is_onnx:
+            results = self.model(frame, verbose=False)
+            if not results or len(results) == 0:
+                return None, 0, None
+            res = results[0]
+            if res.boxes is None or len(res.boxes) == 0:
+                return None, 0, None
+
+            confs = res.boxes.conf.cpu().numpy()
+            idx = int(np.argmax(confs))
+            classes = res.boxes.cls.cpu().numpy().astype(int)
+            class_id = int(classes[idx])
+            gesture = self.names.get(class_id, None)
+            if gesture not in GESTURES:
+                return None, 0, None
+
+            xyxy = res.boxes.xyxy.cpu().numpy()[idx]
+            x1, y1, x2, y2 = map(int, xyxy.tolist())
+            return gesture, float(confs[idx]), (x1, y1, x2, y2)
+
         hands, _ = self.hd.findHands(frame, draw=False)
         if not hands:
             return None, 0, None
@@ -612,16 +646,16 @@ def find_default_model():
 def main():
     parser = argparse.ArgumentParser(description='RPS Rhythm Game')
     parser.add_argument('--model', type=str, default=None,
-                        help='TFLite 모델 경로')
+                        help='TFLite 또는 ONNX 모델 경로')
     args = parser.parse_args()
 
     # 모델 찾기
     model_path = args.model or find_default_model()
     if not model_path or not os.path.exists(model_path):
         print("[오류] 모델을 찾을 수 없습니다.")
-        print("  --model 옵션으로 모델 경로를 지정하거나,")
-        print("  train_model.py로 모델을 먼저 학습하세요.")
-        print("  또는 examples/03_CNN_Based_On-Device_AI/ 의 모델을 복사하세요.")
+        print("  --model 옵션으로 TFLite 또는 ONNX 모델 경로를 지정하거나,")
+        print("  train_model.py로 TFLite 모델을 먼저 학습하세요.")
+        print("  또는 examples/03_CNN_Based_On-Device_AI/ 의 TFLite 모델을 복사하세요.")
         return
 
     print(f"모델 로드: {model_path}")
