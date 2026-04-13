@@ -62,13 +62,13 @@ TIME_LIMIT_PER_NOTE = 8  # 노트당 제한시간 (초), 0이면 무제한
 STAGES = [
     # (시퀀스 길이, 미리보기 시간(초), 노트 제한시간(초), 설명)
     (3,  6.0, 0,  "Tutorial"),
-    (4,  5.5, 0,  "Easy 1"),
-    (4,  5.0, 0,  "Easy 2"),
-    (5,  5.0, 10, "Normal 1"),
-    (5,  4.5, 10, "Normal 2"),
-    (6,  4.5, 8,  "Normal 3"),
-    (7,  4.0, 8,  "Hard 1"),
-    (8,  4.0, 7,  "Hard 2"),
+    (5,  5.0, 0,  "Easy 1"),
+    (5,  4.5, 8,  "Easy 2"),
+    (5,  4.5, 10, "Normal 1"),
+    (5,  4.0, 10, "Normal 2"),
+    (6,  4.0, 8,  "Normal 3"),
+    (7,  3.8, 8,  "Hard 1"),
+    (8,  3.5, 7,  "Hard 2"),
     (9,  3.5, 6,  "Hard 3"),
     (10, 3.0, 5,  "Expert"),
 ]
@@ -767,8 +767,10 @@ def main():
                 # ── 제스처 확정 로직 (연속 N프레임 같은 제스처 감지) ──
                 confirmed = False
                 if game.last_detection:
-                    # 이전에 확정된 것과 같으면 무시 (다른 제스처를 해야 넘어감)
-                    if game.last_detection == game.prev_confirmed:
+                    # 이전에 확정된 것과 같으면 일반적으로 무시
+                    # 단 다음 목표가 같은 제스처일 경우에는 반복 노트를 허용
+                    current_target = game.sequence[game.current_note]
+                    if game.last_detection == game.prev_confirmed and current_target != game.prev_confirmed:
                         pass
                     elif game.last_detection == game.confirm_gesture:
                         game.confirm_count += 1
