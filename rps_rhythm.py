@@ -1,5 +1,5 @@
 """
-RPS Rhythm v2 - 가위바위보 리듬 게임 (성능/인식 개선판)
+RPS Rhythm - 가위바위보 리듬 게임 (성능/인식 개선판)
 
 v1 대비 변경점:
   1. 카메라 캡처 스레드 분리         → cap.read() 블로킹 제거
@@ -14,9 +14,9 @@ v1 대비 변경점:
   10. ONNX YOLO 모델 지원 (HandDetector 우회, 한 번에 검출+분류)
 
 사용법:
-  python rps_rhythm_v2.py                                       (자동 탐색)
-  python rps_rhythm_v2.py --model models/rps_mobilenetv2.tflite (TFLite)
-  python rps_rhythm_v2.py --model models/best.onnx              (ONNX/YOLO)
+  python rps_rhythm.py                                       (자동 탐색)
+  python rps_rhythm.py --model models/rps_mobilenetv2.tflite (TFLite)
+  python rps_rhythm.py --model models/best.onnx              (ONNX/YOLO)
 
 조작:
   SPACE → 게임 시작 / 다음 스테이지 / 재시작
@@ -476,24 +476,32 @@ def draw_sequence_bar(img, game, now):
     spacing = (SCREEN_W - margin * 2) // max(n - 1, 1)
     cy = bar_y + bar_h // 2
     if game.state == game.PLAY:
-        for i, gesture in enumerate(game.sequence):
+        for i, _ in enumerate(game.sequence):
             cx = margin + i * spacing
+            label = str(i + 1)
+            text_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.65, 2)[0]
+            tx = cx - text_size[0] // 2
+            ty = cy + text_size[1] // 2
             if i < game.current_note:
                 if i < len(game.results):
                     result = game.results[i][0]
                     col = (0, 255, 0) if result == 'correct' else (0, 0, 200)
-                    cv2.circle(img, (cx, cy), 18, col, -1)
-                    cv2.circle(img, (cx, cy), 18, (255, 255, 255), 1)
-                    mark = 'O' if result == 'correct' else 'X'
-                    cv2.putText(img, mark, (cx - 8, cy + 7),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                    cv2.circle(img, (cx, cy), 20, col, -1)
+                    cv2.circle(img, (cx, cy), 20, (255, 255, 255), 1)
+                    cv2.putText(img, label, (tx, ty),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
             elif i == game.current_note:
                 pulse = int(abs(math.sin(now * 4)) * 8)
-                draw_gesture_icon(img, gesture, cx, cy, 28 + pulse, highlight=True)
+                r = 26 + pulse
+                cv2.circle(img, (cx, cy), r + 5, (255, 255, 255), 2)
+                cv2.circle(img, (cx, cy), r, (0, 200, 255), -1)
+                cv2.circle(img, (cx, cy), r, (255, 255, 255), 2)
+                cv2.putText(img, label, (tx, ty),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
             else:
                 cv2.circle(img, (cx, cy), 20, (60, 60, 60), 2)
-                cv2.putText(img, '?', (cx - 7, cy + 8),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (80, 80, 80), 2)
+                cv2.putText(img, label, (tx, ty),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.65, (120, 120, 120), 2)
         progress = game.current_note / n
         bar_x1, bar_x2 = 20, SCREEN_W - 20
         bar_bottom = bar_y + bar_h + 5
@@ -569,7 +577,7 @@ def draw_judgment_effect(img, result, now, judge_time):
 
 def draw_title_screen(img):
     cv2.rectangle(img, (0, 0), (SCREEN_W, SCREEN_H), (20, 20, 40), -1)
-    title = "RPS RHYTHM v2"
+    title = "RPS RHYTHM"
     text_size = cv2.getTextSize(title, cv2.FONT_HERSHEY_SIMPLEX, 1.8, 3)[0]
     cv2.putText(img, title, (SCREEN_W//2 - text_size[0]//2, 180),
                 cv2.FONT_HERSHEY_SIMPLEX, 1.8, (0, 255, 255), 3)
@@ -731,11 +739,11 @@ class KeyboardReader:
 def find_default_model():
     base = os.path.dirname(__file__)
     candidates = [
-        os.path.join(base, 'models', 'best.onnx'),
         os.path.join(base, 'models', 'rps_mobilenetv2.tflite'),
         os.path.join(base, 'models', 'rps_mobilenetv2_qat.tflite'),
         os.path.join(base, 'models', 'rps_mobilenetv2_ptq_int8.tflite'),
         os.path.join(base, 'models', 'RPS_MobileNetV2_Augmentation.tflite'),
+        os.path.join(base, 'models', 'best.onnx'),
         os.path.join(base, '..', 'examples', '03_CNN_Based_On-Device_AI',
                      'RPS_MobileNetV2_Augmentation.tflite'),
         os.path.join(base, '..', 'examples', '03_CNN_Based_On-Device_AI',
@@ -751,7 +759,7 @@ def find_default_model():
 #  메인
 # ══════════════════════════════════════════════
 def main():
-    parser = argparse.ArgumentParser(description='RPS Rhythm Game v2')
+    parser = argparse.ArgumentParser(description='RPS Rhythm Game')
     parser.add_argument('--model', type=str, default=None,
                         help='TFLite 또는 ONNX 모델 경로')
     parser.add_argument('--no-thread-cam', action='store_true',
@@ -795,8 +803,8 @@ def main():
     worker = InferenceWorker(detector)
     worker.start()
 
-    cv2.namedWindow('RPS Rhythm v2', cv2.WINDOW_NORMAL)
-    cv2.resizeWindow('RPS Rhythm v2', SCREEN_W, SCREEN_H)
+    cv2.namedWindow('RPS Rhythm', cv2.WINDOW_NORMAL)
+    cv2.resizeWindow('RPS Rhythm', SCREEN_W, SCREEN_H)
 
     kb = KeyboardReader()
     kb.start()
@@ -811,7 +819,7 @@ def main():
     stable_g, stable_c = None, 0.0
     last_seen_seq = 0
 
-    print("\n=== RPS RHYTHM v2 ===")
+    print("\n=== RPS RHYTHM ===")
     print("터미널에서 키 입력:  SPACE=시작  q=종료\n")
 
     try:
@@ -889,6 +897,7 @@ def main():
             elif game.state == game.PLAY:
                 draw_hud(screen, game)
                 draw_camera_feed(screen, frame, game, "")
+                draw_sequence_bar(screen, game, now)
 
                 if game.current_note < len(game.sequence):
                     target = game.sequence[game.current_note]
@@ -1036,7 +1045,7 @@ def main():
                         (SCREEN_W - 180, SCREEN_H - 10),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.4, (100, 100, 100), 1)
 
-            cv2.imshow('RPS Rhythm v2', screen)
+            cv2.imshow('RPS Rhythm', screen)
             cv2.waitKey(1)
 
             # ── 키 입력 ──
