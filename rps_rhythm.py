@@ -687,6 +687,9 @@ def main():
         if not ret:
             break
 
+        # 좌우 반전: 거울처럼 보여지도록
+        frame = cv2.flip(frame, 1)
+
         now = time.time()
         screen = np.zeros((SCREEN_H, SCREEN_W, 3), dtype=np.uint8)
 
@@ -695,12 +698,13 @@ def main():
         if game.state == game.PLAY:
             gesture, conf, bbox = detector.detect(frame)
             if gesture and conf > 0.5:
-                detection_text = f"{GESTURE_KR[gesture]} ({conf:.0%})"
                 game.last_detection = gesture
                 if bbox:
                     x1, y1, x2, y2 = bbox
                     cv2.rectangle(frame, (x1, y1), (x2, y2),
                                   GESTURE_COLOR[gesture], 2)
+                if game.stage_idx == 0:
+                    detection_text = f"{GESTURE_KR[gesture]} ({conf:.0%})"
             else:
                 game.last_detection = None
 
@@ -736,13 +740,14 @@ def main():
                 time_limit = game.note_time_limit()
                 elapsed_note = now - game.note_start_time
 
-                # 현재 내야 할 제스처 크게 표시 (카메라 옆)
+                # 현재 내야 할 제스처는 튜토리얼 단계에서만 가이드로 표시
                 cam_x = SCREEN_W // 2 - CAM_W // 2
-                draw_gesture_icon(screen, target,
-                                  cam_x + CAM_W + 40, 250, 35, highlight=True)
-                cv2.putText(screen, GESTURE_KR[target],
-                            (cam_x + CAM_W + 5, 300),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                if game.stage_idx == 0:
+                    draw_gesture_icon(screen, target,
+                                      cam_x + CAM_W + 40, 250, 35, highlight=True)
+                    cv2.putText(screen, GESTURE_KR[target],
+                                (cam_x + CAM_W + 5, 300),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
                 cv2.putText(screen, f"#{game.current_note + 1}/{len(game.sequence)}",
                             (cam_x + CAM_W + 10, 325),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180, 180, 180), 1)
