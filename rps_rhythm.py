@@ -828,8 +828,8 @@ def main():
     # 카메라
     if args.no_thread_cam:
         cam = cv2.VideoCapture(0)
-        cam.set(cv2.CAP_PROP_FRAME_WIDTH, CAM_W)
-        cam.set(cv2.CAP_PROP_FRAME_HEIGHT, CAM_H)
+        cam.set(cv2.CAP_PROP_FRAME_WIDTH, CAM_CAPTURE_W)
+        cam.set(cv2.CAP_PROP_FRAME_HEIGHT, CAM_CAPTURE_H)
         cam.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         def grab():
             ok, f = cam.read(); return f if ok else None
