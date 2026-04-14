@@ -1288,6 +1288,12 @@ def main():
                         _by = 165 + _i * 100
                         if _box_x <= mx <= _box_x + _box_w and _by <= my <= _by + 82:
                             game.selected_mode = _i
+                            game.mode = _i
+                            game.reset()
+                            game.state = game.MEMORIZE
+                            game.generate_sequence()
+                            game.memorize_start = time.time()
+                            print(f"[Mode: {GAME_MODES[game.mode]}] [Stage {game.stage_idx + 1}] 시퀀스: {game.sequence}")
                             break
 
             # ── 키 입력 ──
