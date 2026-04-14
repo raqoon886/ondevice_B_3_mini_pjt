@@ -669,8 +669,9 @@ def _is_back_btn_click(mx, my):
 def draw_hud(img, game):
     cv2.rectangle(img, (0, 0), (SCREEN_W, 52), (20, 20, 20), -1)
     seq_len, _, time_limit, stage_name = game.get_stage()
-    cv2.putText(img, f"Stage {game.stage_idx + 1}: {stage_name}",
-                (10, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+    mode_name = GAME_MODES[game.mode]
+    cv2.putText(img, f"[{mode_name}] Stage {game.stage_idx + 1}: {stage_name}",
+                (10, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
     limit_text = f"Limit:{time_limit}s" if time_limit > 0 else "No Limit"
     cv2.putText(img, limit_text, (10, 44),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180, 180, 180), 1)
