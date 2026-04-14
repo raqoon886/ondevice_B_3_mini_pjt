@@ -647,6 +647,25 @@ def draw_sequence_bar(img, game, now):
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (80, 80, 80), 2)
 
 
+# ── BACK 버튼 (타이틀로 돌아가기) ──
+_BACK_BTN_X = 6
+_BACK_BTN_Y = SCREEN_H - 30
+_BACK_BTN_W = 60
+_BACK_BTN_H = 24
+
+def draw_back_button(img):
+    x, y, w, h = _BACK_BTN_X, _BACK_BTN_Y, _BACK_BTN_W, _BACK_BTN_H
+    cv2.rectangle(img, (x, y), (x + w, y + h), (40, 40, 50), -1)
+    cv2.rectangle(img, (x, y), (x + w, y + h), (120, 120, 140), 1)
+    ts = cv2.getTextSize("BACK", cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)[0]
+    cv2.putText(img, "BACK", (x + (w - ts[0]) // 2, y + (h + ts[1]) // 2),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.4, (180, 180, 200), 1)
+
+def _is_back_btn_click(mx, my):
+    return (_BACK_BTN_X <= mx <= _BACK_BTN_X + _BACK_BTN_W
+            and _BACK_BTN_Y <= my <= _BACK_BTN_Y + _BACK_BTN_H)
+
+
 def draw_hud(img, game):
     cv2.rectangle(img, (0, 0), (SCREEN_W, 52), (20, 20, 20), -1)
     seq_len, _, time_limit, stage_name = game.get_stage()
@@ -1292,6 +1311,10 @@ def main():
             cur_time = time.time()
             fps = 1.0 / max(cur_time - fps_time, 0.001)
             fps_time = cur_time
+            # BACK 버튼 (타이틀/스테이지셀렉트 제외)
+            if game.state not in (game.TITLE, game.STAGE_SELECT):
+                draw_back_button(screen)
+
             cv2.putText(screen, f"FPS:{fps:.0f}  INF:{inf_latency_ms:.0f}ms",
                         (SCREEN_W - 180, SCREEN_H - 10),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.4, (100, 100, 100), 1)
@@ -1304,6 +1327,11 @@ def main():
                 clicks = _mouse_clicks[:]
                 _mouse_clicks.clear()
             for (mx, my) in clicks:
+                # BACK 버튼 클릭 → 타이틀로
+                if game.state not in (game.TITLE, game.STAGE_SELECT) and _is_back_btn_click(mx, my):
+                    game.reset()
+                    print("[Back to Title]")
+                    continue
                 if game.state == game.TITLE:
                     _box_x = SCREEN_W // 2 - 310
                     _box_w = 620
@@ -1360,6 +1388,9 @@ def main():
             elif key_ch == '\x1b' or key_ch == 'b':
                 if game.state == game.STAGE_SELECT:
                     game.state = game.TITLE
+                elif game.state not in (game.TITLE,):
+                    game.reset()
+                    print("[Back to Title]")
             elif key_ch == ' ':
                 if game.state == game.TITLE:
                     game.mode = game.selected_mode
