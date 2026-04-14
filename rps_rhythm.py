@@ -133,7 +133,7 @@ _cache_heart(24)
 SCORE_CORRECT = 200
 SCORE_BONUS_PER_COMBO = 30
 HOLD_TIME = 0.5           # 같은 제스처를 N초 이상 유지해야 확정 (시간 기반)
-COOLDOWN_TIME = 0.5     # 확정 후 다음 입력 받기까지 대기 (같은 제스처 연속 입력 가능)
+COOLDOWN_TIME = 0.7     # 확정 후 다음 입력 받기까지 대기 (같은 제스처 연속 입력 가능)
 TIME_LIMIT_PER_NOTE = 8
 
 STAGES = [
