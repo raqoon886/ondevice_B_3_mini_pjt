@@ -1,5 +1,5 @@
 """
-RPS Rhythm v2 - 가위바위보 리듬 게임 (성능/인식 개선판)
+RPS Rhythm - 가위바위보 리듬 게임 (성능/인식 개선판)
 
 v1 대비 변경점:
   1. 카메라 캡처 스레드 분리         → cap.read() 블로킹 제거
@@ -14,9 +14,9 @@ v1 대비 변경점:
   10. ONNX YOLO 모델 지원 (HandDetector 우회, 한 번에 검출+분류)
 
 사용법:
-  python rps_rhythm_v2.py                                       (자동 탐색)
-  python rps_rhythm_v2.py --model models/rps_mobilenetv2.tflite (TFLite)
-  python rps_rhythm_v2.py --model models/best.onnx              (ONNX/YOLO)
+  python rps_rhythm.py                                       (자동 탐색)
+  python rps_rhythm.py --model models/rps_mobilenetv2.tflite (TFLite)
+  python rps_rhythm.py --model models/best.onnx              (ONNX/YOLO)
 
 조작:
   SPACE → 게임 시작 / 다음 스테이지 / 재시작
@@ -607,7 +607,7 @@ def draw_judgment_effect(img, result, now, judge_time):
 
 def draw_title_screen(img):
     cv2.rectangle(img, (0, 0), (SCREEN_W, SCREEN_H), (20, 20, 40), -1)
-    title = "RPS RHYTHM v2"
+    title = "RPS RHYTHM"
     text_size = cv2.getTextSize(title, cv2.FONT_HERSHEY_SIMPLEX, 1.8, 3)[0]
     cv2.putText(img, title, (SCREEN_W//2 - text_size[0]//2, 180),
                 cv2.FONT_HERSHEY_SIMPLEX, 1.8, (0, 255, 255), 3)
@@ -833,8 +833,8 @@ def main():
     worker = InferenceWorker(detector)
     worker.start()
 
-    cv2.namedWindow('RPS Rhythm v2', cv2.WINDOW_NORMAL)
-    cv2.resizeWindow('RPS Rhythm v2', SCREEN_W, SCREEN_H)
+    cv2.namedWindow('RPS Rhythm', cv2.WINDOW_NORMAL)
+    cv2.resizeWindow('RPS Rhythm', SCREEN_W, SCREEN_H)
 
     kb = KeyboardReader()
     kb.start()
@@ -849,7 +849,7 @@ def main():
     stable_g, stable_c = None, 0.0
     last_seen_seq = 0
 
-    print("\n=== RPS RHYTHM v2 ===")
+    print("\n=== RPS RHYTHM ===")
     print("터미널에서 키 입력:  SPACE=시작  q=종료\n")
 
     try:
@@ -1009,6 +1009,9 @@ def main():
                         cv2.putText(screen, f"HOLD {GESTURE_KR[game.confirm_gesture]}",
                                     (hbar_x, hbar_y - 4),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, (220, 220, 220), 1)
+                        cv2.putText(screen, f"#{game.current_note + 1}/{len(game.sequence)}",
+                            (cam_x + CAM_W + 10, 325),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180, 180, 180), 1)
 
                     if confirmed:
                         if detected == target:
@@ -1074,7 +1077,7 @@ def main():
                         (SCREEN_W - 180, SCREEN_H - 10),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.4, (100, 100, 100), 1)
 
-            cv2.imshow('RPS Rhythm v2', screen)
+            cv2.imshow('RPS Rhythm', screen)
             cv2.waitKey(1)
 
             # ── 키 입력 ──
