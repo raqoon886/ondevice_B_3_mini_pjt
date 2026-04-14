@@ -309,7 +309,7 @@ class RPSDetector:
         """
         # ── ONNX/YOLO 분기: 한 번의 추론으로 검출+분류 ──
         if self.is_onnx:
-            results = self.model(frame, imgsz=320, verbose=False)
+            results = self.model(frame, verbose=False)
             if not results or len(results) == 0:
                 return None, 0.0, None
             res = results[0]
