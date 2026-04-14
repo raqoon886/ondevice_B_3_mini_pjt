@@ -892,6 +892,17 @@ def main():
                     if g is not None and prev_stable is not None and g != prev_stable:
                         smoother.reset()
                     stable_g, stable_c = smoother.update(g, c)
+                    # ── 즉시 hold 리셋 ──
+                    # 추론 지연(inference latency) 중에 old stable_g가 유지되어
+                    # hold 타이머가 계속 누적되는 문제 방지.
+                    # raw g 가 현재 hold 제스처와 다를 때 smoother 결과를 기다리지 않고
+                    # confirm_gesture 와 hold_start_time 을 즉시 갱신한다.
+                    if (g is not None
+                            and game.confirm_gesture is not None
+                            and g != game.confirm_gesture
+                            and not (now < game.cooldown_until)):
+                        game.confirm_gesture = g
+                        game.hold_start_time = now
                 # stable_g 는 새 결과 없을 때 이전 값 유지 (메인루프 60Hz가 영향 X)
                 if stable_g:
                     detection_text = f"{GESTURE_KR[stable_g]} ({stable_c:.0%})"
