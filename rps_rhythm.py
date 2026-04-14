@@ -888,7 +888,7 @@ def main():
 
             elif game.state == game.PLAY:
                 draw_hud(screen, game)
-                draw_camera_feed(screen, frame, game, detection_text)
+                draw_camera_feed(screen, frame, game, "")
 
                 if game.current_note < len(game.sequence):
                     target = game.sequence[game.current_note]
@@ -896,14 +896,6 @@ def main():
                     elapsed_note = now - game.note_start_time
 
                     cam_x = SCREEN_W // 2 - CAM_W // 2
-                    draw_gesture_icon(screen, target,
-                                      cam_x + CAM_W + 40, 250, 35, highlight=True)
-                    cv2.putText(screen, GESTURE_KR[target],
-                                (cam_x + CAM_W + 5, 300),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-                    cv2.putText(screen, f"#{game.current_note + 1}/{len(game.sequence)}",
-                                (cam_x + CAM_W + 10, 325),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180, 180, 180), 1)
 
                     if time_limit > 0:
                         remaining = max(0, time_limit - elapsed_note)
