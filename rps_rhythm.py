@@ -108,6 +108,18 @@ STAGES = [
     (10, 3.0, 5,  "Expert"),
 ]
 
+# ── 게임 모드 ──
+WINS_AGAINST = {'rock': 'scissors', 'scissors': 'paper', 'paper': 'rock'}
+BEATEN_BY    = {v: k for k, v in WINS_AGAINST.items()}
+GAME_MODES   = ['Tutorial', 'Same', 'Win', 'Lose']
+MODE_KR      = ['튜토리얼', '똑같이 내기', '이기기', '지기']
+MODE_DESC    = [
+    'Progressive  /  Match gesture',
+    'All-at-once  /  Match gesture',
+    'All-at-once  /  Beat each gesture',
+    'All-at-once  /  Lose to each gesture',
+]
+
 
 # ══════════════════════════════════════════════
 #  카메라 캡처 스레드
@@ -418,6 +430,8 @@ class GameState:
     ALL_CLEAR = 'all_clear'
 
     def __init__(self):
+        self.selected_mode = 1  # 타이틀에서 선택한 모드 (persistent)
+        self.mode = 1           # 현재 플레이 중인 모드 (reset해도 유지)
         self.reset()
 
     def reset(self):
@@ -462,6 +476,18 @@ class GameState:
 
     def preview_time(self):
         return self.get_stage()[1]
+
+
+# ══════════════════════════════════════════════
+#  게임 모드 헬퍼
+# ══════════════════════════════════════════════
+def get_required_gesture(mode, target):
+    """명시된 모드에 따라 플레이어가 내야 하는 제스첸 반환"""
+    if mode == 2:
+        return BEATEN_BY[target]      # 이기기: target을 이기는 제스첸
+    if mode == 3:
+        return WINS_AGAINST[target]   # 지기: target이 이기는 제스첸 (플레이어가 짐)
+    return target                     # Tutorial / Same: 똑같이
 
 
 # ══════════════════════════════════════════════
@@ -568,6 +594,9 @@ def draw_hud(img, game):
                 cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180, 180, 180), 1)
     cv2.putText(img, f"Score: {game.score}", (SCREEN_W // 2 - 60, 22),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+    mode_hud_colors = [(180, 180, 180), (0, 200, 200), (100, 255, 100), (120, 120, 255)]
+    cv2.putText(img, GAME_MODES[game.mode], (SCREEN_W - 100, 22),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, mode_hud_colors[game.mode], 2)
     if game.combo > 1:
         cv2.putText(img, f"{game.combo}x COMBO", (SCREEN_W // 2 - 50, 44),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 200, 0), 1)
@@ -610,35 +639,54 @@ def draw_judgment_effect(img, result, now, judge_time):
                 cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, 3)
 
 
-def draw_title_screen(img):
+def draw_title_screen(img, game):
     cv2.rectangle(img, (0, 0), (SCREEN_W, SCREEN_H), (20, 20, 40), -1)
     title = "RPS RHYTHM"
-    text_size = cv2.getTextSize(title, cv2.FONT_HERSHEY_SIMPLEX, 2.4, 4)[0]
-    cv2.putText(img, title, (SCREEN_W//2 - text_size[0]//2, 190),
-                cv2.FONT_HERSHEY_SIMPLEX, 2.4, (0, 255, 255), 4)
-    sub = "Faster Detection, Smoother Gameplay"
-    text_size = cv2.getTextSize(sub, cv2.FONT_HERSHEY_SIMPLEX, 0.75, 1)[0]
-    cv2.putText(img, sub, (SCREEN_W//2 - text_size[0]//2, 250),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.75, (200, 200, 200), 1)
-    icons_y = 340
-    for i, g in enumerate(GESTURES):
-        cx = SCREEN_W // 2 + (i - 1) * 140
-        draw_gesture_icon(img, g, cx, icons_y, 45)
-        cv2.putText(img, GESTURE_KR[g], (cx - 45, icons_y + 70),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (200, 200, 200), 1)
+    text_size = cv2.getTextSize(title, cv2.FONT_HERSHEY_SIMPLEX, 2.0, 4)[0]
+    cv2.putText(img, title, (SCREEN_W // 2 - text_size[0] // 2, 95),
+                cv2.FONT_HERSHEY_SIMPLEX, 2.0, (0, 255, 255), 4)
+    sub = "Select Game Mode  (press 0 – 3)"
+    text_size = cv2.getTextSize(sub, cv2.FONT_HERSHEY_SIMPLEX, 0.65, 1)[0]
+    cv2.putText(img, sub, (SCREEN_W // 2 - text_size[0] // 2, 140),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.65, (180, 180, 180), 1)
+    box_x = SCREEN_W // 2 - 310
+    box_w = 620
+    for i in range(4):
+        is_sel = (i == game.selected_mode)
+        by = 165 + i * 100
+        bg = (40, 60, 60) if is_sel else (22, 22, 38)
+        cv2.rectangle(img, (box_x, by), (box_x + box_w, by + 82), bg, -1)
+        if is_sel:
+            cv2.rectangle(img, (box_x, by), (box_x + box_w, by + 82), (0, 200, 200), 2)
+        num_col  = (0, 255, 255)   if is_sel else (80, 80, 80)
+        name_col = (255, 255, 255) if is_sel else (140, 140, 140)
+        desc_col = (160, 220, 160) if is_sel else (70, 100, 70)
+        cv2.putText(img, f"{i}.", (box_x + 18, by + 42),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, num_col, 2)
+        cv2.putText(img, MODE_KR[i], (box_x + 62, by + 42),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, name_col, 2)
+        cv2.putText(img, MODE_DESC[i], (box_x + 62, by + 70),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.52, desc_col, 1)
     blink = int(time.time() * 2) % 2
     if blink:
-        start_text = "Press SPACE to Start"
+        start_text = "SPACE  →  Start"
         text_size = cv2.getTextSize(start_text, cv2.FONT_HERSHEY_SIMPLEX, 1.0, 2)[0]
-        cv2.putText(img, start_text, (SCREEN_W//2 - text_size[0]//2, 460),
+        cv2.putText(img, start_text, (SCREEN_W // 2 - text_size[0] // 2, 600),
                     cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
 
 
 def draw_memorize_screen(img, game, now):
     elapsed = now - game.memorize_start
     remaining = game.preview_time() - elapsed
-    cv2.putText(img, "MEMORIZE!", (SCREEN_W // 2 - 120, 90),
-                cv2.FONT_HERSHEY_SIMPLEX, 1.3, (255, 200, 0), 2)
+    if game.mode == 2:
+        memo_title, title_color = "MEMORIZE!  →  BEAT EACH", (100, 255, 100)
+    elif game.mode == 3:
+        memo_title, title_color = "MEMORIZE!  →  LOSE TO EACH", (120, 120, 255)
+    else:
+        memo_title, title_color = "MEMORIZE!", (255, 200, 0)
+    text_size = cv2.getTextSize(memo_title, cv2.FONT_HERSHEY_SIMPLEX, 1.1, 2)[0]
+    cv2.putText(img, memo_title, (SCREEN_W // 2 - text_size[0] // 2, 90),
+                cv2.FONT_HERSHEY_SIMPLEX, 1.1, title_color, 2)
     bar_w = 380
     bar_x = SCREEN_W // 2 - bar_w // 2
     progress = max(0, remaining / game.preview_time())
@@ -647,23 +695,37 @@ def draw_memorize_screen(img, game, now):
     cv2.putText(img, f"{remaining:.1f}s", (bar_x + bar_w + 15, 535),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
     n = len(game.sequence)
-    total_w = n * 100
-    start_x = SCREEN_W // 2 - total_w // 2 + 50
-    for i, gesture in enumerate(game.sequence):
-        cx = start_x + i * 100
-        cy = 360
-        progress_ratio = elapsed / game.preview_time()
-        if progress_ratio >= i / n:
-            age = (progress_ratio - i / n) * game.preview_time()
-            scale = min(1.0, age * 3)
-            r = int(45 * scale)
-            draw_gesture_icon(img, gesture, cx, cy, r, highlight=True)
+    if game.mode == 0:
+        # Tutorial: 순차적으로 나타남
+        spacing = 100
+        total_w = n * spacing
+        start_x = SCREEN_W // 2 - total_w // 2 + spacing // 2
+        for i, gesture in enumerate(game.sequence):
+            cx = start_x + i * spacing
+            cy = 360
+            progress_ratio = elapsed / game.preview_time()
+            if progress_ratio >= i / n:
+                age = (progress_ratio - i / n) * game.preview_time()
+                scale = min(1.0, age * 3)
+                r = int(45 * scale)
+                draw_gesture_icon(img, gesture, cx, cy, r, highlight=True)
+                cv2.putText(img, str(i + 1), (cx - 7, cy + 65),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (180, 180, 180), 2)
+            else:
+                cv2.circle(img, (cx, cy), 40, (50, 50, 50), 2)
+                cv2.putText(img, "?", (cx - 10, cy + 12),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (80, 80, 80), 2)
+    else:
+        # Same / Win / Lose: 한 번에 모두 표출
+        spacing = min(100, (SCREEN_W - 60) // max(n, 1))
+        total_w = n * spacing
+        start_x = SCREEN_W // 2 - total_w // 2 + spacing // 2
+        for i, gesture in enumerate(game.sequence):
+            cx = start_x + i * spacing
+            cy = 360
+            draw_gesture_icon(img, gesture, cx, cy, 45, highlight=True)
             cv2.putText(img, str(i + 1), (cx - 7, cy + 65),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (180, 180, 180), 2)
-        else:
-            cv2.circle(img, (cx, cy), 40, (50, 50, 50), 2)
-            cv2.putText(img, "?", (cx - 10, cy + 12),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (80, 80, 80), 2)
 
 
 def draw_countdown(img, game, now):
@@ -938,7 +1000,7 @@ def main():
 
             # ── 상태 머신 (v1과 동일) ──
             if game.state == game.TITLE:
-                draw_title_screen(screen)
+                draw_title_screen(screen, game)
 
             elif game.state == game.MEMORIZE:
                 draw_hud(screen, game)
@@ -1050,7 +1112,8 @@ def main():
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (220, 220, 220), 2)
 
                     if confirmed:
-                        if detected == target:
+                        required = get_required_gesture(game.mode, target)
+                        if detected == required:
                             game.combo += 1
                             game.max_combo = max(game.max_combo, game.combo)
                             bonus = min(game.combo, 10)
@@ -1120,13 +1183,17 @@ def main():
             key_ch = kb.get_key()
             if key_ch == 'q':
                 break
+            elif key_ch in ('0', '1', '2', '3'):
+                if game.state == game.TITLE:
+                    game.selected_mode = int(key_ch)
             elif key_ch == ' ':
                 if game.state == game.TITLE:
+                    game.mode = game.selected_mode
                     game.reset()
                     game.state = game.MEMORIZE
                     game.generate_sequence()
                     game.memorize_start = time.time()
-                    print(f"[Stage {game.stage_idx + 1}] 시퀀스: {game.sequence}")
+                    print(f"[Mode: {GAME_MODES[game.mode]}] [Stage {game.stage_idx + 1}] 시퀀스: {game.sequence}")
                 elif game.state == game.STAGE_CLEAR:
                     game.stage_idx += 1
                     if game.stage_idx >= len(STAGES):
