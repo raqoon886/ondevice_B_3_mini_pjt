@@ -48,12 +48,6 @@ try:
 except ImportError:
     YOLO = None
 
-try:
-    from PIL import ImageFont, ImageDraw, Image as PILImage
-    _PIL_AVAILABLE = True
-except ImportError:
-    _PIL_AVAILABLE = False
-
 # ══════════════════════════════════════════════
 #  상수 & 설정
 # ══════════════════════════════════════════════
@@ -82,70 +76,6 @@ GESTURE_COLOR = {
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(SCRIPT_DIR, 'data')
-
-
-# ── 한글 폰트 렌더링 ──
-def _find_korean_font():
-    candidates = [
-        '/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf',
-        '/usr/share/fonts/truetype/nanum/NanumGothic.ttf',
-        '/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf',
-        '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
-        '/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc',
-        '/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc',
-        '/usr/share/fonts/truetype/unfonts-core/UnDotum.ttf',
-    ]
-    for path in candidates:
-        if os.path.exists(path):
-            return path
-    return None
-
-KOREAN_FONT_PATH = _find_korean_font() if _PIL_AVAILABLE else None
-_pil_font_cache = {}
-
-def put_text_pil(img, text, pos, font_size, color):
-    """한글을 포함한 유니코드 텍스트를 OpenCV 이미지에 렌더링.
-    pos=(x, y)는 텍스트 왼쪽 위 좌표. 텍스트 너비(px)를 반환."""
-    if not _PIL_AVAILABLE or KOREAN_FONT_PATH is None:
-        return 0
-    if font_size not in _pil_font_cache:
-        try:
-            _pil_font_cache[font_size] = ImageFont.truetype(KOREAN_FONT_PATH, font_size)
-        except Exception:
-            _pil_font_cache[font_size] = None
-    font = _pil_font_cache.get(font_size)
-    if font is None:
-        return 0
-
-    # 텍스트 바운딩박스 측정
-    tmp = PILImage.new('RGBA', (1, 1))
-    bbox = ImageDraw.Draw(tmp).textbbox((0, 0), text, font=font)
-    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    if tw <= 0 or th <= 0:
-        return 0
-
-    # RGBA 버퍼에 텍스트 렌더링 (BGR→RGB 변환)
-    text_img = PILImage.new('RGBA', (tw, th), (0, 0, 0, 0))
-    ImageDraw.Draw(text_img).text(
-        (-bbox[0], -bbox[1]), text, font=font,
-        fill=(color[2], color[1], color[0], 255)
-    )
-    arr = np.array(text_img)
-    text_bgr = arr[:, :, [2, 1, 0]]
-    alpha = arr[:, :, 3:] / 255.0
-
-    # img 에 알파 블렌딩
-    ih, iw = img.shape[:2]
-    x, y = int(pos[0]), int(pos[1])
-    x1, y1 = max(0, x), max(0, y)
-    x2, y2 = min(iw, x + tw), min(ih, y + th)
-    if x2 > x1 and y2 > y1:
-        sx1, sy1 = x1 - x, y1 - y
-        sx2, sy2 = sx1 + (x2 - x1), sy1 + (y2 - y1)
-        a = alpha[sy1:sy2, sx1:sx2]
-        roi = img[y1:y2, x1:x2]
-        roi[:] = (text_bgr[sy1:sy2, sx1:sx2] * a + roi * (1 - a)).astype(np.uint8)
-    return tw
 
 
 def load_image_with_transparency(path):
@@ -222,12 +152,11 @@ STAGES = [
 WINS_AGAINST = {'rock': 'scissors', 'scissors': 'paper', 'paper': 'rock'}
 BEATEN_BY    = {v: k for k, v in WINS_AGAINST.items()}
 GAME_MODES   = ['Tutorial', 'Same', 'Win', 'Lose']
-MODE_KR      = ['튜토리얼', '똑같이 내기', '이기기', '지기']
 MODE_DESC    = [
-    'Progressive  /  Match gesture',
-    'All-at-once  /  Match gesture',
-    'All-at-once  /  Beat each gesture',
-    'All-at-once  /  Lose to each gesture',
+    'Tutorial',
+    'Match gesture',
+    'Win to each gesture',
+    'Lose to each gesture',
 ]
 
 
@@ -788,7 +717,7 @@ def draw_title_screen(img, game):
     text_size = cv2.getTextSize(title, cv2.FONT_HERSHEY_SIMPLEX, 2.0, 4)[0]
     cv2.putText(img, title, (SCREEN_W // 2 - text_size[0] // 2, 95),
                 cv2.FONT_HERSHEY_SIMPLEX, 2.0, (0, 255, 255), 4)
-    sub = "Select Game Mode  (press 0 – 3)"
+    sub = "Select Game Mode  (press 0 ~ 3)"
     text_size = cv2.getTextSize(sub, cv2.FONT_HERSHEY_SIMPLEX, 0.65, 1)[0]
     cv2.putText(img, sub, (SCREEN_W // 2 - text_size[0] // 2, 140),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.65, (180, 180, 180), 1)
@@ -804,13 +733,10 @@ def draw_title_screen(img, game):
         num_col  = (0, 255, 255)   if is_sel else (80, 80, 80)
         name_col = (255, 255, 255) if is_sel else (140, 140, 140)
         desc_col = (160, 220, 160) if is_sel else (70, 100, 70)
-        cv2.putText(img, f"{i}.", (box_x + 18, by + 55),
+        cv2.putText(img, f"{i}.", (box_x + 18, by + 50),
                     cv2.FONT_HERSHEY_SIMPLEX, 1.0, num_col, 2)
-        # 한글 모드명 (크게)
-        put_text_pil(img, MODE_KR[i], (box_x + 62, by + 16), 30, name_col)
-        # 영어 설명 (작게)
-        cv2.putText(img, MODE_DESC[i], (box_x + 62, by + 66),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, desc_col, 1)
+        cv2.putText(img, MODE_DESC[i], (box_x + 62, by + 50),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.78, name_col, 2)
     blink = int(time.time() * 2) % 2
     if blink:
         start_text = "SPACE to Start"
