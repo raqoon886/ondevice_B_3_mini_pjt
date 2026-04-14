@@ -83,24 +83,53 @@ for gesture_name, filename in {
         if image is not None:
             GESTURE_IMAGE[gesture_name] = image
 
-SCORE_CORRECT = 200
-SCORE_BONUS_PER_COMBO = 30
-HOLD_TIME = 0.7           # 같은 제스처를 N초 이상 유지해야 확정 (시간 기반)
-COOLDOWN_TIME = 0.25      # 확정 후 다음 입력 받기까지 대기 (같은 제스처 연속 입력 가능)
-TIME_LIMIT_PER_NOTE = 8
+SCORE_BONUS_PER_COMBO = 20
+COOLDOWN_TIME = 0.15      # 노트 판정 후 짧은 대기
 
+# ── 레인/판정 관련 상수 ──
+LANE_X_POSITIONS = {
+    'scissors': SCREEN_W // 2 - 120,
+    'rock':     SCREEN_W // 2,
+    'paper':    SCREEN_W // 2 + 120,
+}
+LANE_TOP    = 60
+LANE_BOTTOM = 450
+JUDGE_Y     = LANE_BOTTOM
+NOTE_SPEED  = 180          # 픽셀/초
+
+# 노트 바 판정 구간 시간 (짧게)
+NOTE_ACTIVE_TIME_MIN = 0.4
+NOTE_ACTIVE_TIME_MAX = 1.5
+
+# 쉐이크 노트: 짧은 시간 안에 제스처 변화 횟수
+SHAKE_THRESHOLD = 3        # N번 이상 제스처 변화 → 성공
+
+# PERFECT/GOOD/MISS 비율 기준
+JUDGE_PERFECT_RATIO = 0.80
+JUDGE_GOOD_RATIO    = 0.45
+
+# 판정별 점수
+SCORE_PERFECT = 300
+SCORE_GOOD    = 150
+SCORE_MISS    = 0
+
+# 노트 타입
+NOTE_NORMAL = 'normal'   # 해당 제스처 유지
+NOTE_SHAKE  = 'shake'    # 빠르게 제스처 변화 (어떤 제스처든)
+NOTE_AVOID  = 'avoid'    # 손을 치워야 함 (아무것도 인식 안 되면 OK)
+
+# 스테이지: (노트 수, 노트 간격(초), BPM 힌트, 설명, shake비율, avoid비율)
 STAGES = [
-    # (시퀀스 길이, 미리보기 시간(초), 노트 제한시간(초), 설명)
-    (3,  6.0, 0,  "Tutorial"),
-    (5,  5.0, 0,  "Easy 1"),
-    (5,  4.5, 8,  "Easy 2"),
-    (5,  4.5, 10, "Normal 1"),
-    (5,  4.0, 10, "Normal 2"),
-    (6,  4.0, 8,  "Normal 3"),
-    (7,  3.8, 8,  "Hard 1"),
-    (8,  3.5, 7,  "Hard 2"),
-    (9,  3.5, 6,  "Hard 3"),
-    (10, 3.0, 5,  "Expert"),
+    (15, 1.2, 60,  "Intro",    0.0,  0.0),
+    (20, 1.0, 70,  "Easy 1",   0.0,  0.05),
+    (25, 0.9, 80,  "Easy 2",   0.1,  0.05),
+    (30, 0.8, 90,  "Normal 1", 0.15, 0.1),
+    (30, 0.7, 100, "Normal 2", 0.15, 0.1),
+    (35, 0.6, 110, "Hard 1",   0.2,  0.1),
+    (35, 0.55,115, "Hard 2",   0.2,  0.15),
+    (40, 0.5, 120, "Hard 3",   0.25, 0.15),
+    (40, 0.4, 130, "Expert 1", 0.25, 0.2),
+    (40, 0.3, 140, "Expert 2", 0.3,  0.2),
 ]
 
 
@@ -403,64 +432,74 @@ class PredictionSmoother:
 #  게임 상태 (v1과 동일)
 # ══════════════════════════════════════════════
 class GameState:
-    TITLE = 'title'
-    MEMORIZE = 'memorize'
-    COUNTDOWN = 'countdown'
-    PLAY = 'play'
-    JUDGE = 'judge'
+    TITLE       = 'title'
+    COUNTDOWN   = 'countdown'
+    PLAY        = 'play'
     STAGE_CLEAR = 'stage_clear'
-    GAME_OVER = 'game_over'
-    ALL_CLEAR = 'all_clear'
+    GAME_OVER   = 'game_over'
+    ALL_CLEAR   = 'all_clear'
 
     def __init__(self):
         self.reset()
 
     def reset(self):
-        self.state = self.TITLE
-        self.stage_idx = 0
-        self.score = 0
-        self.total_combo = 0
-        self.max_combo = 0
-        self.lives = 5
-        self.sequence = []
-        self.current_note = 0
-        self.combo = 0
-        self.results = []
-        self.memorize_start = 0
+        self.state        = self.TITLE
+        self.stage_idx    = 0
+        self.score        = 0
+        self.max_combo    = 0
+        self.lives        = 5
+        self.combo        = 0
+        self.miss_streak  = 0      # 연속 MISS 카운터
+        self.results      = []     # [('perfect'/'good'/'miss', gesture)]
         self.countdown_start = 0
-        self.last_detection = None
-        self.stage_score = 0
-        self.confirm_count = 0       # (호환 유지용, 실제론 사용 안함)
-        self.confirm_gesture = None  # 현재 hold 중인 제스처
-        self.hold_start_time = 0     # 현재 제스처 hold 시작 시각
-        self.cooldown_until = 0      # 이 시각까지는 입력 무시 (직전 확정 후 안정화)
-        self.note_start_time = 0
+        self.last_detection  = None
+        self.stage_score  = 0
+        # 레인
+        self.lane_notes   = []
+        self.particles    = []
+        self.note_queue   = []     # 스폰 대기 중인 노트 목록
+        self.next_spawn_t = 0.0
+        self.total_notes  = 0
+        self.judged_count = 0
+        # 쉐이크 추적
+        self.prev_gesture = None
+        self.shake_changes = 0
+        self.shake_last_t  = 0.0
 
     def get_stage(self):
-        if self.stage_idx < len(STAGES):
-            return STAGES[self.stage_idx]
-        return STAGES[-1]
+        return STAGES[min(self.stage_idx, len(STAGES) - 1)]
 
-    def generate_sequence(self):
-        length, _, _, _ = self.get_stage()
-        self.sequence = [random.choice(GESTURES) for _ in range(length)]
-        self.current_note = 0
-        self.results = []
-        self.stage_score = 0
-        self.confirm_count = 0
-        self.confirm_gesture = None
-        self.hold_start_time = 0
-        self.cooldown_until = 0
-
-    def note_time_limit(self):
-        return self.get_stage()[2]
-
-    def preview_time(self):
+    def note_interval(self):
         return self.get_stage()[1]
+
+    def generate_notes(self):
+        """스테이지 노트 큐를 생성합니다."""
+        n_notes, interval, bpm, name, shake_r, avoid_r = self.get_stage()
+        notes = []
+        for i in range(n_notes):
+            r = random.random()
+            if r < avoid_r:
+                ntype = NOTE_AVOID
+                gesture = random.choice(GESTURES)
+            elif r < avoid_r + shake_r:
+                ntype = NOTE_SHAKE
+                gesture = random.choice(GESTURES)
+            else:
+                ntype = NOTE_NORMAL
+                gesture = random.choice(GESTURES)
+            notes.append((ntype, gesture))
+        self.note_queue   = notes
+        self.total_notes  = n_notes
+        self.judged_count = 0
+        self.results      = []
+        self.stage_score  = 0
+        self.lane_notes   = []
+        self.particles    = []
+        self.next_spawn_t = 0.0
 
 
 # ══════════════════════════════════════════════
-#  UI (v1과 동일)
+#  UI 헬퍼
 # ══════════════════════════════════════════════
 def draw_gesture_icon(img, gesture, cx, cy, size, alpha=1.0, highlight=False):
     icon = GESTURE_IMAGE.get(gesture)
@@ -501,75 +540,70 @@ def draw_gesture_icon(img, gesture, cx, cy, size, alpha=1.0, highlight=False):
                 cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), 2)
 
 
-def draw_sequence_bar(img, game, now):
-    bar_y = 60
-    bar_h = 80
+def draw_hud(img, game, now):
+    """상단 HUD: 배경 그라데이션 + 스코어 + 콤보 멀티플라이어 + 목숨"""
+    # 반투명 HUD 배경
     overlay = img.copy()
-    cv2.rectangle(overlay, (0, bar_y), (SCREEN_W, bar_y + bar_h), (30, 30, 30), -1)
-    cv2.addWeighted(overlay, 0.7, img, 0.3, 0, img)
-    n = len(game.sequence)
-    if n == 0:
-        return
-    margin = 60
-    spacing = (SCREEN_W - margin * 2) // max(n - 1, 1)
-    cy = bar_y + bar_h // 2
-    if game.state == game.PLAY:
-        for i, gesture in enumerate(game.sequence):
-            cx = margin + i * spacing
-            if i < game.current_note:
-                if i < len(game.results):
-                    result = game.results[i][0]
-                    col = (0, 255, 0) if result == 'correct' else (0, 0, 200)
-                    cv2.circle(img, (cx, cy), 18, col, -1)
-                    cv2.circle(img, (cx, cy), 18, (255, 255, 255), 1)
-                    mark = 'O' if result == 'correct' else 'X'
-                    cv2.putText(img, mark, (cx - 8, cy + 7),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-            elif i == game.current_note:
-                pulse = int(abs(math.sin(now * 4)) * 8)
-                draw_gesture_icon(img, gesture, cx, cy, 28 + pulse, highlight=True)
-            else:
-                cv2.circle(img, (cx, cy), 20, (60, 60, 60), 2)
-                cv2.putText(img, '?', (cx - 7, cy + 8),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (80, 80, 80), 2)
-        progress = game.current_note / n
-        bar_x1, bar_x2 = 20, SCREEN_W - 20
-        bar_bottom = bar_y + bar_h + 5
-        cv2.rectangle(img, (bar_x1, bar_bottom), (bar_x2, bar_bottom + 4), (50, 50, 50), -1)
-        cv2.rectangle(img, (bar_x1, bar_bottom),
-                      (bar_x1 + int((bar_x2 - bar_x1) * progress), bar_bottom + 4),
-                      (0, 255, 200), -1)
-    elif game.state == game.MEMORIZE:
-        for i, gesture in enumerate(game.sequence):
-            cx = margin + i * spacing
-            progress = (now - game.memorize_start) / game.preview_time()
-            if progress >= i / n:
-                draw_gesture_icon(img, gesture, cx, cy, 25, highlight=True)
-                cv2.putText(img, str(i + 1), (cx - 5, cy + 42),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (180, 180, 180), 1)
-            else:
-                cv2.circle(img, (cx, cy), 20, (50, 50, 50), 2)
-                cv2.putText(img, '?', (cx - 7, cy + 8),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (80, 80, 80), 2)
+    cv2.rectangle(overlay, (0, 0), (SCREEN_W, 55), (10, 10, 25), -1)
+    cv2.addWeighted(overlay, 0.85, img, 0.15, 0, img)
 
+    # 스테이지 정보
+    _, _, bpm, stage_name, _, _ = game.get_stage()
+    cv2.putText(img, f"Stage {game.stage_idx + 1}  {stage_name}  BPM {bpm}",
+                (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (160, 160, 200), 1)
 
-def draw_hud(img, game):
-    cv2.rectangle(img, (0, 0), (SCREEN_W, 52), (20, 20, 20), -1)
-    seq_len, _, time_limit, stage_name = game.get_stage()
-    cv2.putText(img, f"Stage {game.stage_idx + 1}: {stage_name}",
-                (10, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
-    limit_text = f"Limit:{time_limit}s" if time_limit > 0 else "No Limit"
-    cv2.putText(img, limit_text, (10, 44),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180, 180, 180), 1)
-    cv2.putText(img, f"Score: {game.score}", (SCREEN_W // 2 - 60, 22),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-    if game.combo > 1:
-        cv2.putText(img, f"{game.combo}x COMBO", (SCREEN_W // 2 - 50, 44),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 200, 0), 1)
+    # 진행률 바
+    progress = game.judged_count / max(game.total_notes, 1)
+    bar_x1, bar_x2 = 10, SCREEN_W - 10
+    cv2.rectangle(img, (bar_x1, 28), (bar_x2, 34), (40, 40, 60), -1)
+    prog_color = (0, 200, 255) if progress < 0.7 else (0, 255, 150)
+    cv2.rectangle(img, (bar_x1, 28),
+                  (bar_x1 + int((bar_x2 - bar_x1) * progress), 34), prog_color, -1)
+    cv2.putText(img, f"{game.judged_count}/{game.total_notes}",
+                (bar_x2 - 50, 27), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (150, 150, 180), 1)
+
+    # 점수 (중앙, 크게)
+    score_text = f"{game.score:,}"
+    tw = cv2.getTextSize(score_text, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)[0][0]
+    cv2.putText(img, score_text, (SCREEN_W // 2 - tw // 2, 22),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+
+    # 콤보 멀티플라이어
+    if game.combo >= 20:
+        mult, mcol = "x3.0", (255, 100, 0)
+    elif game.combo >= 10:
+        mult, mcol = "x2.0", (255, 200, 0)
+    elif game.combo >= 5:
+        mult, mcol = "x1.5", (100, 255, 100)
+    else:
+        mult, mcol = None, None
+    if mult:
+        pulse = 0.8 + 0.2 * abs(math.sin(now * 4))
+        mcol_p = tuple(int(c * pulse) for c in mcol)
+        cv2.putText(img, f"{game.combo} COMBO  {mult}",
+                    (SCREEN_W // 2 - 70, 48),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, mcol_p, 2)
+    elif game.combo > 1:
+        cv2.putText(img, f"{game.combo} COMBO",
+                    (SCREEN_W // 2 - 40, 48),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 200, 100), 1)
+
+    # 목숨 (하트, 우측)
     for i in range(5):
-        hx = SCREEN_W - 30 * (5 - i)
-        color = (0, 0, 255) if i < game.lives else (60, 60, 60)
-        cv2.putText(img, "<3", (hx, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
+        hx = SCREEN_W - 22 * (5 - i)
+        col = (80, 80, 220) if i < game.lives else (40, 40, 60)
+        cv2.putText(img, "♥", (hx, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.55, col, 2)
+
+    # MISS 경고
+    if game.miss_streak >= 2:
+        alpha_w = 0.4 + 0.3 * abs(math.sin(now * 6))
+        col_w = tuple(int(c * alpha_w) for c in (0, 0, 255))
+        cv2.putText(img, f"!! MISS x{game.miss_streak} !!",
+                    (SCREEN_W - 130, 48), cv2.FONT_HERSHEY_SIMPLEX, 0.45, col_w, 1)
+
+
+def draw_sequence_bar(img, game, now):
+    pass  # 암기 단계 제거로 사용 안 함
 
 
 def draw_camera_feed(img, frame, game, detection_text):
@@ -585,144 +619,471 @@ def draw_camera_feed(img, frame, game, detection_text):
 
 
 def draw_judgment_effect(img, result, now, judge_time):
-    elapsed = now - judge_time
-    if elapsed > 1.0:
-        return
-    alpha = max(0, 1.0 - elapsed)
-    scale = 1.0 + elapsed * 0.5
-    if result == 'correct':
-        text, color = "CORRECT!", (0, 255, 100)
-    elif result == 'wrong':
-        text, color = "WRONG!", (0, 0, 255)
-    else:
-        text, color = "TIME OUT", (0, 100, 255)
-    color = tuple(int(c * alpha) for c in color)
-    font_scale = 1.2 * scale
-    text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, 3)[0]
-    tx = SCREEN_W // 2 - text_size[0] // 2
-    ty = 430 + int(elapsed * -30)
-    cv2.putText(img, text, (tx, ty),
-                cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, 3)
+    # 하위 호환용 - 실제 판정은 draw_judgment_texts 에서 처리
+    pass
 
 
-def draw_title_screen(img):
-    cv2.rectangle(img, (0, 0), (SCREEN_W, SCREEN_H), (20, 20, 40), -1)
+def draw_glow_rect(img, x1, y1, x2, y2, color, thickness=2, glow_size=4):
+    """네온 글로우 사각형"""
+    for g in range(glow_size, 0, -1):
+        alpha = 0.15 * (glow_size - g + 1) / glow_size
+        gcol = tuple(int(c * alpha) for c in color)
+        cv2.rectangle(img, (x1 - g, y1 - g), (x2 + g, y2 + g), gcol, 1)
+    cv2.rectangle(img, (x1, y1), (x2, y2), color, thickness)
+
+
+# ── 레인 배경 (Fancy) ──
+def draw_lane_background(img, now):
+    lane_w = 64
+    for gesture, lx in LANE_X_POSITIONS.items():
+        color = GESTURE_COLOR[gesture]
+        x1, x2 = lx - lane_w // 2, lx + lane_w // 2
+        # 레인 배경 그라데이션 느낌 (어두운 컬러)
+        overlay = img.copy()
+        cv2.rectangle(overlay, (x1, LANE_TOP), (x2, LANE_BOTTOM + 40), (15, 15, 20), -1)
+        cv2.addWeighted(overlay, 0.7, img, 0.3, 0, img)
+        # 레인 사이드 라인 (네온)
+        side_col = tuple(int(c * 0.4) for c in color)
+        cv2.line(img, (x1, LANE_TOP), (x1, LANE_BOTTOM + 40), side_col, 1)
+        cv2.line(img, (x2, LANE_TOP), (x2, LANE_BOTTOM + 40), side_col, 1)
+        # 레인 하단 제스처 아이콘 + 글로우 원
+        pulse = 0.6 + 0.4 * abs(math.sin(now * 2 + lx))
+        gcol = tuple(int(c * pulse * 0.5) for c in color)
+        cv2.circle(img, (lx, LANE_BOTTOM + 22), 22, gcol, -1)
+        cv2.circle(img, (lx, LANE_BOTTOM + 22), 22, color, 2)
+        draw_gesture_icon(img, gesture, lx, LANE_BOTTOM + 22, 18)
+
+    # 판정선 (글로우 효과)
+    lx0 = LANE_X_POSITIONS['scissors'] - 40
+    lx1 = LANE_X_POSITIONS['paper'] + 40
+    for g in range(5, 0, -1):
+        alpha = 0.08 * g
+        gcol = tuple(int(255 * alpha) for _ in range(3))
+        cv2.line(img, (lx0, JUDGE_Y - g), (lx1, JUDGE_Y - g), gcol, 1)
+        cv2.line(img, (lx0, JUDGE_Y + g), (lx1, JUDGE_Y + g), gcol, 1)
+    cv2.line(img, (lx0, JUDGE_Y), (lx1, JUDGE_Y), (255, 255, 255), 2)
+
+
+# ── 노트 스폰 ──
+def spawn_lane_note(game, ntype, gesture):
+    active_time = random.uniform(NOTE_ACTIVE_TIME_MIN, NOTE_ACTIVE_TIME_MAX)
+    bar_h = int(active_time * NOTE_SPEED)
+    game.lane_notes.append({
+        'type':          ntype,
+        'gesture':       gesture,
+        'y':             float(LANE_TOP),
+        'bar_h':         bar_h,
+        'speed':         NOTE_SPEED,
+        'active_time':   active_time,
+        'judged':        False,
+        'result_applied': False,
+        'judge_started': False,
+        'judge_start_t': 0.0,
+        'detect_time':   0.0,
+        'avoid_ok_time': 0.0,    # AVOID 노트: 손 없는 시간 누적
+        'shake_count':   0,      # SHAKE 노트: 변화 횟수
+        'last_gesture':  None,
+        'realtime_judge': None,  # 실시간 판정 텍스트 (진행 중)
+        'note_idx':      len(game.lane_notes),
+    })
+
+
+# ── 노트 업데이트 ──
+def update_lane_notes(game, dt, cur_g, now):
+    for note in game.lane_notes:
+        if note['judged']:
+            note['y'] += note['speed'] * dt
+            continue
+        note['y'] += note['speed'] * dt
+
+        # 판정선에 닿으면 판정 시작
+        if not note['judge_started'] and note['y'] >= JUDGE_Y:
+            note['judge_started'] = True
+            note['judge_start_t'] = now
+
+        if note['judge_started']:
+            elapsed = now - note['judge_start_t']
+
+            if note['type'] == NOTE_NORMAL:
+                if cur_g == note['gesture']:
+                    note['detect_time'] += dt
+                # 실시간 판정 업데이트
+                ratio = note['detect_time'] / max(note['active_time'], 0.01)
+                if ratio >= JUDGE_PERFECT_RATIO:
+                    note['realtime_judge'] = 'PERFECT'
+                elif ratio >= JUDGE_GOOD_RATIO:
+                    note['realtime_judge'] = 'GOOD'
+                else:
+                    note['realtime_judge'] = 'MISS'
+
+            elif note['type'] == NOTE_SHAKE:
+                # 제스처가 바뀔 때마다 카운트
+                if cur_g is not None and cur_g != note['last_gesture']:
+                    note['shake_count'] += 1
+                    note['last_gesture'] = cur_g
+                cnt = note['shake_count']
+                note['realtime_judge'] = 'PERFECT' if cnt >= SHAKE_THRESHOLD + 1 \
+                    else 'GOOD' if cnt >= SHAKE_THRESHOLD \
+                    else f'SHAKE {cnt}/{SHAKE_THRESHOLD}'
+
+            elif note['type'] == NOTE_AVOID:
+                if cur_g is None:
+                    note['avoid_ok_time'] += dt
+                ratio = note['avoid_ok_time'] / max(note['active_time'], 0.01)
+                note['realtime_judge'] = 'PERFECT' if ratio >= JUDGE_PERFECT_RATIO \
+                    else 'GOOD' if ratio >= JUDGE_GOOD_RATIO else 'MISS'
+
+            # 판정 구간 종료
+            if elapsed >= note['active_time']:
+                note['judged'] = True
+
+    game.lane_notes = [n for n in game.lane_notes
+                       if n['y'] - n['bar_h'] < SCREEN_H + 30]
+
+
+# ── 판정 계산 ──
+def calc_judgment(note):
+    if note['type'] == NOTE_NORMAL:
+        ratio = note['detect_time'] / max(note['active_time'], 0.01)
+        if ratio >= JUDGE_PERFECT_RATIO:   return 'perfect'
+        elif ratio >= JUDGE_GOOD_RATIO:    return 'good'
+        else:                              return 'miss'
+    elif note['type'] == NOTE_SHAKE:
+        if note['shake_count'] >= SHAKE_THRESHOLD + 1:  return 'perfect'
+        elif note['shake_count'] >= SHAKE_THRESHOLD:     return 'good'
+        else:                                            return 'miss'
+    elif note['type'] == NOTE_AVOID:
+        ratio = note['avoid_ok_time'] / max(note['active_time'], 0.01)
+        if ratio >= JUDGE_PERFECT_RATIO:   return 'perfect'
+        elif ratio >= JUDGE_GOOD_RATIO:    return 'good'
+        else:                              return 'miss'
+    return 'miss'
+
+
+# ── 노트 그리기 ──
+def draw_lane_notes(img, game, now):
+    lane_w = 58
+    for note in game.lane_notes:
+        gesture = note['gesture']
+        lx = LANE_X_POSITIONS[gesture]
+        base_color = GESTURE_COLOR[gesture]
+        x1, x2 = lx - lane_w // 2, lx + lane_w // 2
+        y_top = int(note['y'] - note['bar_h'])
+        y_bot = int(note['y'])
+        yt = max(0, y_top)
+        yb = min(SCREEN_H, y_bot)
+        if yt >= yb:
+            continue
+
+        # 노트 타입별 색상
+        if note['type'] == NOTE_AVOID:
+            base_color = (60, 60, 220)   # 빨간 계열 (피해야 함)
+            label = 'AVOID'
+        elif note['type'] == NOTE_SHAKE:
+            base_color = (200, 180, 0)   # 노란 계열
+            label = 'SHAKE'
+        else:
+            label = GESTURE_EMOJI.get(gesture, '?')
+
+        if note['judged']:
+            ov = img.copy()
+            cv2.rectangle(ov, (x1, yt), (x2, yb),
+                          tuple(int(c * 0.12) for c in base_color), -1)
+            cv2.addWeighted(ov, 0.5, img, 0.5, 0, img)
+            continue
+
+        if note['judge_started']:
+            # 실시간 판정 색상
+            rj = note.get('realtime_judge', '')
+            if 'PERFECT' in str(rj):
+                draw_color = (0, 255, 220)
+            elif 'GOOD' in str(rj):
+                draw_color = (0, 220, 80)
+            else:
+                draw_color = (80, 60, 200)
+            pulse = 0.75 + 0.25 * abs(math.sin(now * 10))
+            dc = tuple(int(c * pulse) for c in draw_color)
+            # 바 채우기
+            cv2.rectangle(img, (x1, yt), (x2, yb), dc, -1)
+            # 인식 진행률 흰색 채움
+            if note['type'] == NOTE_NORMAL:
+                ratio = note['detect_time'] / max(note['active_time'], 0.01)
+            elif note['type'] == NOTE_AVOID:
+                ratio = note['avoid_ok_time'] / max(note['active_time'], 0.01)
+            else:
+                ratio = min(note['shake_count'] / max(SHAKE_THRESHOLD, 1), 1.0)
+            fill_h = int((yb - yt) * min(ratio, 1.0))
+            if fill_h > 2:
+                cv2.rectangle(img, (x1 + 4, yb - fill_h), (x2 - 4, yb - 2),
+                              (255, 255, 255), -1)
+            draw_glow_rect(img, x1, yt, x2, yb, draw_color, thickness=2, glow_size=5)
+            # 실시간 판정 텍스트 (바 위에)
+            if rj:
+                rj_str = str(rj)
+                rj_col = (0, 255, 255) if 'PERFECT' in rj_str \
+                    else (0, 255, 100) if 'GOOD' in rj_str else (180, 100, 255)
+                fs = 0.38
+                tw = cv2.getTextSize(rj_str, cv2.FONT_HERSHEY_SIMPLEX, fs, 1)[0][0]
+                cv2.putText(img, rj_str, (lx - tw // 2, max(LANE_TOP + 12, yt - 4)),
+                            cv2.FONT_HERSHEY_SIMPLEX, fs, rj_col, 1)
+        else:
+            # 접근 중인 노트: 일반 색
+            cv2.rectangle(img, (x1, yt), (x2, yb), base_color, -1)
+            draw_glow_rect(img, x1, yt, x2, yb, base_color, thickness=1, glow_size=3)
+
+        # 노트 중앙 라벨
+        cy = max(LANE_TOP + 12, min(SCREEN_H - 12, (yt + yb) // 2))
+        if note['type'] in (NOTE_SHAKE, NOTE_AVOID):
+            fs = 0.38
+            tw = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, fs, 1)[0][0]
+            cv2.putText(img, label, (lx - tw // 2, cy + 5),
+                        cv2.FONT_HERSHEY_SIMPLEX, fs, (255, 255, 255), 1)
+        else:
+            draw_gesture_icon(img, gesture, lx, cy, 15)
+
+
+# ── 파티클 생성 ──
+def spawn_particles(game, x, y, color, count=20):
+    for _ in range(count):
+        angle = random.uniform(0, 2 * math.pi)
+        speed = random.uniform(60, 220)
+        game.particles.append({
+            'x': float(x), 'y': float(y),
+            'vx': math.cos(angle) * speed,
+            'vy': math.sin(angle) * speed,
+            'color': color,
+            'life': 1.0,
+            'max_life': random.uniform(0.4, 0.9),
+            'size': random.randint(3, 8),
+        })
+
+
+# ── 파티클 업데이트 & 그리기 ──
+def update_draw_particles(img, game, dt):
+    alive = []
+    for p in game.particles:
+        p['life'] -= dt / p['max_life']
+        if p['life'] <= 0:
+            continue
+        p['x'] += p['vx'] * dt
+        p['y'] += p['vy'] * dt
+        p['vy'] += 300 * dt  # 중력
+        alpha = max(0.0, p['life'])
+        color = tuple(int(c * alpha) for c in p['color'])
+        cx, cy = int(p['x']), int(p['y'])
+        if 0 <= cx < SCREEN_W and 0 <= cy < SCREEN_H:
+            cv2.circle(img, (cx, cy), p['size'], color, -1)
+        alive.append(p)
+    game.particles = alive
+
+
+# ── 판정 텍스트 이펙트 (PERFECT/GOOD/MISS) ──
+JUDGMENT_DISPLAY = {}   # gesture → {'text', 'color', 'time', 'scale_anim'}
+
+def show_judgment_text(gesture, judgment):
+    config = {
+        'perfect': ("PERFECT!", (0, 255, 255)),
+        'good':    ("GOOD!",    (0, 255, 80)),
+        'miss':    ("MISS",     (80, 80, 255)),
+    }
+    text, color = config.get(judgment, ("?", (255, 255, 255)))
+    JUDGMENT_DISPLAY[gesture] = {
+        'text': text, 'color': color,
+        'time': time.time(),
+    }
+
+
+def draw_judgment_texts(img, now):
+    for gesture, info in list(JUDGMENT_DISPLAY.items()):
+        elapsed = now - info['time']
+        if elapsed > 1.0:
+            del JUDGMENT_DISPLAY[gesture]
+            continue
+        alpha = max(0.0, 1.0 - elapsed)
+        scale = 0.9 + elapsed * 0.5
+        lx = LANE_X_POSITIONS[gesture]
+        y = JUDGE_Y - 30 - int(elapsed * 40)
+        color = tuple(int(c * alpha) for c in info['color'])
+        text = info['text']
+        fs = scale * 0.75
+        tw = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, fs, 2)[0][0]
+        cv2.putText(img, text, (lx - tw // 2, y),
+                    cv2.FONT_HERSHEY_SIMPLEX, fs, color, 2)
+
+
+def draw_title_screen(img, now):
+    # 배경 그라데이션
+    for y in range(SCREEN_H):
+        ratio = y / SCREEN_H
+        r = int(5 + 15 * ratio)
+        g = int(5 + 10 * ratio)
+        b = int(20 + 40 * ratio)
+        cv2.line(img, (0, y), (SCREEN_W, y), (b, g, r), 1)
+
+    # 타이틀
     title = "RPS RHYTHM"
-    text_size = cv2.getTextSize(title, cv2.FONT_HERSHEY_SIMPLEX, 1.8, 3)[0]
-    cv2.putText(img, title, (SCREEN_W//2 - text_size[0]//2, 180),
-                cv2.FONT_HERSHEY_SIMPLEX, 1.8, (0, 255, 255), 3)
-    sub = "Faster Detection, Smoother Gameplay"
-    text_size = cv2.getTextSize(sub, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1)[0]
-    cv2.putText(img, sub, (SCREEN_W//2 - text_size[0]//2, 220),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 1)
-    icons_y = 290
+    pulse = 0.85 + 0.15 * abs(math.sin(now * 1.5))
+    col = tuple(int(c * pulse) for c in (0, 255, 255))
+    tw = cv2.getTextSize(title, cv2.FONT_HERSHEY_SIMPLEX, 2.0, 4)[0][0]
+    # 글로우
+    for g in range(8, 0, -2):
+        gcol = tuple(int(c * 0.05 * g) for c in (0, 255, 255))
+        cv2.putText(img, title, (SCREEN_W // 2 - tw // 2, 170),
+                    cv2.FONT_HERSHEY_SIMPLEX, 2.0, gcol, 4 + g)
+    cv2.putText(img, title, (SCREEN_W // 2 - tw // 2, 170),
+                cv2.FONT_HERSHEY_SIMPLEX, 2.0, col, 4)
+
+    sub = "Rock  Paper  Scissors  Rhythm Game"
+    tw2 = cv2.getTextSize(sub, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1)[0][0]
+    cv2.putText(img, sub, (SCREEN_W // 2 - tw2 // 2, 205),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (150, 150, 200), 1)
+
+    # 아이콘
     for i, g in enumerate(GESTURES):
-        cx = SCREEN_W // 2 + (i - 1) * 100
-        draw_gesture_icon(img, g, cx, icons_y, 35)
-        cv2.putText(img, GESTURE_KR[g], (cx - 35, icons_y + 55),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
-    blink = int(time.time() * 2) % 2
+        cx = SCREEN_W // 2 + (i - 1) * 110
+        cy = 290
+        pulse2 = 0.7 + 0.3 * abs(math.sin(now * 2 + i))
+        col2 = tuple(int(c * pulse2) for c in GESTURE_COLOR[g])
+        cv2.circle(img, (cx, cy), 32, col2, -1)
+        cv2.circle(img, (cx, cy), 32, (255, 255, 255), 2)
+        draw_gesture_icon(img, g, cx, cy, 25)
+        cv2.putText(img, GESTURE_KR[g], (cx - 35, cy + 50),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, (180, 180, 200), 1)
+
+    # 조작 안내
+    lines = [
+        "Normal : Hold gesture while bar passes judge line",
+        "SHAKE  : Change gesture rapidly",
+        "AVOID  : Hide your hand (no detection)",
+    ]
+    for i, line in enumerate(lines):
+        tw3 = cv2.getTextSize(line, cv2.FONT_HERSHEY_SIMPLEX, 0.38, 1)[0][0]
+        cv2.putText(img, line, (SCREEN_W // 2 - tw3 // 2, 365 + i * 20),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.38, (120, 120, 160), 1)
+
+    blink = int(now * 2) % 2
     if blink:
         start_text = "Press SPACE to Start"
-        text_size = cv2.getTextSize(start_text, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)[0]
-        cv2.putText(img, start_text, (SCREEN_W//2 - text_size[0]//2, 420),
+        tw4 = cv2.getTextSize(start_text, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)[0][0]
+        cv2.putText(img, start_text, (SCREEN_W // 2 - tw4 // 2, 460),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
 
 
 def draw_memorize_screen(img, game, now):
-    elapsed = now - game.memorize_start
-    remaining = game.preview_time() - elapsed
-    cv2.putText(img, "MEMORIZE!", (SCREEN_W // 2 - 80, 35),
-                cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 200, 0), 2)
-    bar_w = 300
-    bar_x = SCREEN_W // 2 - bar_w // 2
-    progress = max(0, remaining / game.preview_time())
-    cv2.rectangle(img, (bar_x, 485), (bar_x + bar_w, 500), (60, 60, 60), -1)
-    cv2.rectangle(img, (bar_x, 485), (bar_x + int(bar_w * progress), 500), (0, 200, 255), -1)
-    cv2.putText(img, f"{remaining:.1f}s", (bar_x + bar_w + 10, 498),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
-    n = len(game.sequence)
-    total_w = n * 70
-    start_x = SCREEN_W // 2 - total_w // 2 + 35
-    for i, gesture in enumerate(game.sequence):
-        cx = start_x + i * 70
-        cy = 300
-        progress_ratio = elapsed / game.preview_time()
-        if progress_ratio >= i / n:
-            age = (progress_ratio - i / n) * game.preview_time()
-            scale = min(1.0, age * 3)
-            r = int(30 * scale)
-            draw_gesture_icon(img, gesture, cx, cy, r, highlight=True)
-            cv2.putText(img, str(i + 1), (cx - 5, cy + 50),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 180, 180), 1)
-        else:
-            cv2.circle(img, (cx, cy), 30, (50, 50, 50), 2)
-            cv2.putText(img, "?", (cx - 7, cy + 8),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (80, 80, 80), 2)
+    pass  # 암기 단계 제거
 
 
 def draw_countdown(img, game, now):
     elapsed = now - game.countdown_start
     count = max(1, 3 - int(elapsed))
     text = str(count)
-    scale = 3.0 - (elapsed % 1.0) * 1.0
-    text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, 4)[0]
-    tx = SCREEN_W // 2 - text_size[0] // 2
-    ty = SCREEN_H // 2 + text_size[1] // 2
-    alpha = max(0.3, 1.0 - (elapsed % 1.0) * 0.7)
-    color = tuple(int(c * alpha) for c in (0, 255, 255))
-    cv2.putText(img, text, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, scale, color, 4)
-    cv2.putText(img, "GET READY!", (SCREEN_W // 2 - 75, 100),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 200, 0), 2)
+    scale = 3.5 - (elapsed % 1.0) * 1.5
+    tw = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, 5)[0]
+    tx = SCREEN_W // 2 - tw[0] // 2
+    ty = SCREEN_H // 2 + tw[1] // 2
+    alpha = max(0.2, 1.0 - (elapsed % 1.0) * 0.8)
+    col = tuple(int(c * alpha) for c in (0, 255, 255))
+    for g in range(6, 0, -2):
+        gcol = tuple(int(c * 0.06 * g) for c in (0, 255, 255))
+        cv2.putText(img, text, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, scale, gcol, 5 + g)
+    cv2.putText(img, text, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, scale, col, 5)
+    _, _, bpm, stage_name, _, _ = game.get_stage()
+    info = f"Stage {game.stage_idx + 1}: {stage_name}  |  BPM {bpm}"
+    tw2 = cv2.getTextSize(info, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 1)[0][0]
+    cv2.putText(img, info, (SCREEN_W // 2 - tw2 // 2, 100),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 100), 2)
 
 
-def draw_stage_clear(img, game):
-    cv2.putText(img, "STAGE CLEAR!", (SCREEN_W // 2 - 140, 200),
-                cv2.FONT_HERSHEY_SIMPLEX, 1.3, (0, 255, 255), 3)
-    correct = sum(1 for r, _ in game.results if r == 'correct')
-    wrong = sum(1 for r, _ in game.results if r in ('wrong', 'timeout'))
-    y = 260
-    cv2.putText(img, f"CORRECT: {correct}", (SCREEN_W // 2 - 80, y),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 100), 2)
-    cv2.putText(img, f"WRONG:   {wrong}", (SCREEN_W // 2 - 80, y + 35),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-    cv2.putText(img, f"MAX COMBO: {game.max_combo}", (SCREEN_W // 2 - 80, y + 75),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 200, 0), 2)
-    cv2.putText(img, f"STAGE SCORE: {game.stage_score}", (SCREEN_W // 2 - 100, y + 115),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-    blink = int(time.time() * 2) % 2
+def draw_stage_clear(img, game, now):
+    # 배경 어둡게
+    overlay = img.copy()
+    cv2.rectangle(overlay, (0, 0), (SCREEN_W, SCREEN_H), (5, 15, 5), -1)
+    cv2.addWeighted(overlay, 0.7, img, 0.3, 0, img)
+
+    pulse = 0.8 + 0.2 * abs(math.sin(now * 2))
+    col = tuple(int(c * pulse) for c in (0, 255, 200))
+    tw = cv2.getTextSize("STAGE CLEAR!", cv2.FONT_HERSHEY_SIMPLEX, 1.4, 3)[0][0]
+    cv2.putText(img, "STAGE CLEAR!", (SCREEN_W // 2 - tw // 2, 160),
+                cv2.FONT_HERSHEY_SIMPLEX, 1.4, col, 3)
+
+    perfect = sum(1 for r, _ in game.results if r == 'perfect')
+    good    = sum(1 for r, _ in game.results if r == 'good')
+    miss    = sum(1 for r, _ in game.results if r == 'miss')
+    y = 220
+    stats = [
+        (f"PERFECT : {perfect}", (0, 255, 220)),
+        (f"GOOD    : {good}",    (0, 220, 100)),
+        (f"MISS    : {miss}",    (100, 80, 220)),
+        (f"MAX COMBO : {game.max_combo}", (255, 200, 0)),
+        (f"STAGE SCORE : {game.stage_score:,}", (255, 255, 255)),
+    ]
+    for i, (text, col2) in enumerate(stats):
+        tw2 = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.65, 2)[0][0]
+        cv2.putText(img, text, (SCREEN_W // 2 - tw2 // 2, y + i * 38),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.65, col2, 2)
+
+    blink = int(now * 2) % 2
     if blink:
-        cv2.putText(img, "Press SPACE for Next Stage", (SCREEN_W // 2 - 155, y + 175),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.65, (200, 200, 200), 1)
+        msg = "Press SPACE for Next Stage"
+        tw3 = cv2.getTextSize(msg, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 1)[0][0]
+        cv2.putText(img, msg, (SCREEN_W // 2 - tw3 // 2, y + 200),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (180, 180, 200), 1)
 
 
-def draw_game_over(img, game):
-    cv2.putText(img, "GAME OVER", (SCREEN_W // 2 - 120, 220),
-                cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 0, 255), 3)
-    cv2.putText(img, f"FINAL SCORE: {game.score}", (SCREEN_W // 2 - 120, 290),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-    cv2.putText(img, f"Stage {game.stage_idx + 1}  |  Max Combo: {game.max_combo}",
-                (SCREEN_W // 2 - 140, 330),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (180, 180, 180), 1)
-    blink = int(time.time() * 2) % 2
+def draw_game_over(img, game, now):
+    overlay = img.copy()
+    cv2.rectangle(overlay, (0, 0), (SCREEN_W, SCREEN_H), (20, 5, 5), -1)
+    cv2.addWeighted(overlay, 0.8, img, 0.2, 0, img)
+
+    pulse = 0.7 + 0.3 * abs(math.sin(now * 3))
+    col = tuple(int(c * pulse) for c in (80, 80, 255))
+    tw = cv2.getTextSize("GAME OVER", cv2.FONT_HERSHEY_SIMPLEX, 1.8, 4)[0][0]
+    cv2.putText(img, "GAME OVER", (SCREEN_W // 2 - tw // 2, 200),
+                cv2.FONT_HERSHEY_SIMPLEX, 1.8, col, 4)
+
+    tw2 = cv2.getTextSize(f"{game.score:,}", cv2.FONT_HERSHEY_SIMPLEX, 1.1, 2)[0][0]
+    cv2.putText(img, f"{game.score:,}", (SCREEN_W // 2 - tw2 // 2, 280),
+                cv2.FONT_HERSHEY_SIMPLEX, 1.1, (255, 255, 255), 2)
+    info = f"Stage {game.stage_idx + 1}  |  Max Combo: {game.max_combo}"
+    tw3 = cv2.getTextSize(info, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1)[0][0]
+    cv2.putText(img, info, (SCREEN_W // 2 - tw3 // 2, 320),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (160, 160, 180), 1)
+    blink = int(now * 2) % 2
     if blink:
-        cv2.putText(img, "Press SPACE to Retry", (SCREEN_W // 2 - 120, 420),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.65, (200, 200, 200), 1)
+        msg = "Press SPACE to Retry"
+        tw4 = cv2.getTextSize(msg, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 1)[0][0]
+        cv2.putText(img, msg, (SCREEN_W // 2 - tw4 // 2, 420),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 200), 1)
 
 
-def draw_all_clear(img, game):
-    cv2.putText(img, "ALL CLEAR!!", (SCREEN_W // 2 - 140, 200),
-                cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 255), 3)
-    cv2.putText(img, f"TOTAL SCORE: {game.score}", (SCREEN_W // 2 - 120, 280),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 0), 2)
-    cv2.putText(img, f"Max Combo: {game.max_combo}", (SCREEN_W // 2 - 85, 320),
+def draw_all_clear(img, game, now):
+    for y in range(SCREEN_H):
+        ratio = y / SCREEN_H
+        cv2.line(img, (0, y), (SCREEN_W, y),
+                 (int(5 + 20 * ratio), int(20 + 30 * ratio), int(30 + 20 * ratio)), 1)
+
+    pulse = 0.8 + 0.2 * abs(math.sin(now * 2))
+    col = tuple(int(c * pulse) for c in (0, 255, 200))
+    tw = cv2.getTextSize("ALL CLEAR!!", cv2.FONT_HERSHEY_SIMPLEX, 1.8, 4)[0][0]
+    for g in range(8, 0, -2):
+        gcol = tuple(int(c * 0.05 * g) for c in (0, 255, 200))
+        cv2.putText(img, "ALL CLEAR!!", (SCREEN_W // 2 - tw // 2, 190),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.8, gcol, 4 + g)
+    cv2.putText(img, "ALL CLEAR!!", (SCREEN_W // 2 - tw // 2, 190),
+                cv2.FONT_HERSHEY_SIMPLEX, 1.8, col, 4)
+
+    tw2 = cv2.getTextSize(f"{game.score:,}", cv2.FONT_HERSHEY_SIMPLEX, 1.2, 2)[0][0]
+    cv2.putText(img, f"TOTAL  {game.score:,}", (SCREEN_W // 2 - tw2 // 2 - 40, 270),
+                cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 0), 2)
+    tw3 = cv2.getTextSize(f"Max Combo: {game.max_combo}", cv2.FONT_HERSHEY_SIMPLEX, 0.65, 1)[0][0]
+    cv2.putText(img, f"Max Combo: {game.max_combo}", (SCREEN_W // 2 - tw3 // 2, 315),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.65, (200, 200, 200), 1)
-    cv2.putText(img, "Congratulations!", (SCREEN_W // 2 - 100, 380),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 255, 200), 1)
-    blink = int(time.time() * 2) % 2
+    blink = int(now * 2) % 2
     if blink:
-        cv2.putText(img, "Press SPACE to Restart", (SCREEN_W // 2 - 125, 450),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.65, (200, 200, 200), 1)
+        msg = "Press SPACE to Restart"
+        tw4 = cv2.getTextSize(msg, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 1)[0][0]
+        cv2.putText(img, msg, (SCREEN_W // 2 - tw4 // 2, 430),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 200), 1)
 
 
 # ══════════════════════════════════════════════
@@ -809,7 +1170,8 @@ def main():
     print(f"[모델] {model_path}  ({'ONNX/YOLO' if is_onnx else 'TFLite'})")
     print(f"[설정] inference_every={args.inference_every}, "
           f"tflite_threads={TFLITE_THREADS}, hand_conf={HAND_DETECT_CON}, "
-          f"hold={HOLD_TIME}s, cooldown={COOLDOWN_TIME}s")
+          f"cooldown={COOLDOWN_TIME}s, "
+          f"note_active={NOTE_ACTIVE_TIME_MIN}~{NOTE_ACTIVE_TIME_MAX}s")
 
     detector = RPSDetector(model_path, num_threads=TFLITE_THREADS)
     game = GameState()
@@ -900,182 +1262,158 @@ def main():
                 last_seen_seq = 0
                 game.last_detection = None
 
-            # ── 상태 머신 (v1과 동일) ──
+            # ── 상태 머신 ──
             if game.state == game.TITLE:
-                draw_title_screen(screen)
-
-            elif game.state == game.MEMORIZE:
-                draw_hud(screen, game)
-                draw_memorize_screen(screen, game, now)
-                if now - game.memorize_start >= game.preview_time():
-                    game.state = game.COUNTDOWN
-                    game.countdown_start = now
+                draw_title_screen(screen, now)
 
             elif game.state == game.COUNTDOWN:
-                draw_hud(screen, game)
-                draw_camera_feed(screen, frame, game, "")
+                # 카메라 피드 (화면 중앙)
+                cam_display = cv2.resize(frame, (CAM_W, CAM_H))
+                cx0 = SCREEN_W // 2 - CAM_W // 2
+                cy0 = 150
+                screen[cy0:cy0 + CAM_H, cx0:cx0 + CAM_W] = cam_display
+                draw_hud(screen, game, now)
                 draw_countdown(screen, game, now)
                 if now - game.countdown_start >= 3.0:
                     game.state = game.PLAY
-                    game.note_start_time = now
-                    game.confirm_gesture = None
-                    game.hold_start_time = 0
-                    game.cooldown_until = 0
+                    game.next_spawn_t = now
+                    game._prev_t = now
                     smoother.reset()
                     stable_g, stable_c = None, 0.0
 
             elif game.state == game.PLAY:
-                draw_hud(screen, game)
-                draw_camera_feed(screen, frame, game, "")
+                # ── dt 계산 ──
+                if not hasattr(game, '_prev_t'):
+                    game._prev_t = now
+                dt = min(now - game._prev_t, 0.05)
+                game._prev_t = now
 
-                if game.current_note < len(game.sequence):
-                    target = game.sequence[game.current_note]
-                    time_limit = game.note_time_limit()
-                    elapsed_note = now - game.note_start_time
+                cur_g = game.last_detection
 
-                    cam_x = SCREEN_W // 2 - CAM_W // 2
+                # ── 쉐이크 추적 (게임 레벨) ──
+                if cur_g is not None and cur_g != game.prev_gesture:
+                    game.shake_changes += 1
+                    game.shake_last_t = now
+                game.prev_gesture = cur_g
+                # 1초 이상 지나면 쉐이크 카운터 리셋
+                if now - game.shake_last_t > 1.0:
+                    game.shake_changes = 0
 
-                    if time_limit > 0:
-                        remaining = max(0, time_limit - elapsed_note)
-                        bar_w = 100
-                        bar_x = cam_x + CAM_W + 5
-                        bar_y_pos = 340
-                        progress = remaining / time_limit
-                        bar_color = (0, 255, 0) if progress > 0.3 else (0, 0, 255)
-                        cv2.rectangle(screen, (bar_x, bar_y_pos),
-                                      (bar_x + bar_w, bar_y_pos + 8), (50, 50, 50), -1)
-                        cv2.rectangle(screen, (bar_x, bar_y_pos),
-                                      (bar_x + int(bar_w * progress), bar_y_pos + 8),
-                                      bar_color, -1)
-                        cv2.putText(screen, f"{remaining:.1f}s",
-                                    (bar_x + bar_w + 5, bar_y_pos + 8),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.35, (180, 180, 180), 1)
+                # ── 노트 스폰 (노트 큐에서 꺼냄) ──
+                if game.note_queue and now >= game.next_spawn_t:
+                    ntype, gesture = game.note_queue.pop(0)
+                    spawn_lane_note(game, ntype, gesture)
+                    game.next_spawn_t = now + game.note_interval()
 
-                    # ── 제스처 확정 (시간 기반 HOLD + 쿨다운) ──
-                    # 같은 제스처를 HOLD_TIME 초 유지 → 확정.
-                    # 확정 직후 COOLDOWN_TIME 초간 입력 무시 → 그 후엔 손이 그대로여도
-                    # hold 타이머가 새로 시작 (같은 제스처 연속 입력 OK).
-                    confirmed = False
-                    detected = None
-                    cur_g = game.last_detection
-                    in_cooldown = now < game.cooldown_until
+                # ── 노트 업데이트 ──
+                update_lane_notes(game, dt, cur_g, now)
 
-                    if in_cooldown:
-                        # 쿨다운: hold 타이머 리셋 (시각 피드백을 위해 유지하지 않음)
-                        game.confirm_gesture = None
-                        game.hold_start_time = 0
-                    elif cur_g:
-                        if cur_g == game.confirm_gesture:
-                            # 같은 제스처 유지 중 → hold 시간 누적
-                            held = now - game.hold_start_time
-                            if held >= HOLD_TIME:
-                                confirmed = True
-                                detected = cur_g
+                # ── 판정 완료 노트 처리 ──
+                for note in game.lane_notes:
+                    if note['judged'] and not note['result_applied']:
+                        note['result_applied'] = True
+                        judgment = calc_judgment(note)
+                        lx = LANE_X_POSITIONS[note['gesture']]
+                        game.judged_count += 1
+
+                        if judgment == 'perfect':
+                            earned = SCORE_PERFECT
+                            pcol, pcnt = (0, 255, 255), 35
+                        elif judgment == 'good':
+                            earned = SCORE_GOOD
+                            pcol, pcnt = (0, 220, 100), 20
                         else:
-                            # 새 제스처 시작 (또는 손 새로 잡힘) → hold 타이머 시작
-                            game.confirm_gesture = cur_g
-                            game.hold_start_time = now
-                    else:
-                        # 손 안 보임 → hold 리셋
-                        game.confirm_gesture = None
-                        game.hold_start_time = 0
+                            earned = SCORE_MISS
+                            pcol, pcnt = (80, 60, 200), 10
 
-                    # ── 진행 바 표시 ──
-                    hbar_w = 200
-                    hbar_x = SCREEN_W // 2 - hbar_w // 2
-                    hbar_y = 145
-                    if in_cooldown:
-                        # 쿨다운 진행 바 (회색)
-                        cd_progress = 1.0 - (game.cooldown_until - now) / COOLDOWN_TIME
-                        cv2.rectangle(screen, (hbar_x, hbar_y),
-                                      (hbar_x + hbar_w, hbar_y + 10),
-                                      (50, 50, 50), -1)
-                        cv2.rectangle(screen, (hbar_x, hbar_y),
-                                      (hbar_x + int(hbar_w * cd_progress), hbar_y + 10),
-                                      (120, 120, 120), -1)
-                        cv2.putText(screen, "WAIT...", (hbar_x, hbar_y - 4),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180, 180, 180), 1)
-                    elif game.confirm_gesture and game.hold_start_time > 0:
-                        # HOLD 진행 바 (제스처 색상)
-                        held = min(now - game.hold_start_time, HOLD_TIME)
-                        hold_progress = held / HOLD_TIME
-                        cv2.rectangle(screen, (hbar_x, hbar_y),
-                                      (hbar_x + hbar_w, hbar_y + 10),
-                                      (50, 50, 50), -1)
-                        bar_color = GESTURE_COLOR.get(game.confirm_gesture, (200, 200, 200))
-                        cv2.rectangle(screen, (hbar_x, hbar_y),
-                                      (hbar_x + int(hbar_w * hold_progress), hbar_y + 10),
-                                      bar_color, -1)
-                        cv2.putText(screen, f"HOLD {GESTURE_KR[game.confirm_gesture]}",
-                                    (hbar_x, hbar_y - 4),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (220, 220, 220), 1)
-                        cv2.putText(screen, f"#{game.current_note + 1}/{len(game.sequence)}",
-                            (cam_x + CAM_W + 10, 325),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180, 180, 180), 1)
-
-                    if confirmed:
-                        if detected == target:
+                        if judgment != 'miss':
                             game.combo += 1
                             game.max_combo = max(game.max_combo, game.combo)
-                            bonus = min(game.combo, 10)
-                            earned = SCORE_CORRECT + bonus * SCORE_BONUS_PER_COMBO
-                            game.score += earned
-                            game.stage_score += earned
-                            game.results.append(('correct', target))
-                            last_judge_result = 'correct'
+                            # 콤보 멀티플라이어
+                            if game.combo >= 20:   mult = 3.0
+                            elif game.combo >= 10: mult = 2.0
+                            elif game.combo >= 5:  mult = 1.5
+                            else:                  mult = 1.0
+                            total_earned = int(earned * mult) + game.combo * SCORE_BONUS_PER_COMBO
+                            game.score += total_earned
+                            game.stage_score += total_earned
+                            game.results.append((judgment, note['gesture']))
+                            game.miss_streak = 0
                         else:
                             game.combo = 0
-                            game.results.append(('wrong', target))
-                            game.lives -= 1
-                            last_judge_result = 'wrong'
-                        last_judge_time = now
-                        game.confirm_gesture = None
-                        game.hold_start_time = 0
-                        game.cooldown_until = now + COOLDOWN_TIME
-                        game.current_note += 1
-                        game.note_start_time = now
-                        smoother.reset()
-                        stable_g, stable_c = None, 0.0
+                            game.miss_streak += 1
+                            game.results.append(('miss', note['gesture']))
+                            # 연속 MISS 3번마다 목숨 감소
+                            if game.miss_streak % 3 == 0:
+                                game.lives -= 1
 
-                    elif time_limit > 0 and elapsed_note > time_limit:
-                        game.combo = 0
-                        game.results.append(('timeout', target))
-                        game.lives -= 1
-                        last_judge_result = 'timeout'
-                        last_judge_time = now
-                        game.confirm_gesture = None
-                        game.hold_start_time = 0
-                        game.cooldown_until = now + COOLDOWN_TIME
-                        game.current_note += 1
-                        game.note_start_time = now
-                        smoother.reset()
-                        stable_g, stable_c = None, 0.0
+                        spawn_particles(game, lx, JUDGE_Y, pcol, pcnt)
+                        show_judgment_text(note['gesture'], judgment)
 
-                    if game.lives <= 0:
-                        game.state = game.GAME_OVER
-                else:
+                        if game.lives <= 0:
+                            game.state = game.GAME_OVER
+
+                # ── 레인 그리기 ──
+                draw_lane_background(screen, now)
+                draw_lane_notes(screen, game, now)
+                draw_judgment_texts(screen, now)
+                update_draw_particles(screen, game, dt)
+                draw_hud(screen, game, now)
+
+                # ── 카메라 소형 (우하단) ──
+                cam_h_s = 120
+                cam_w_s = int(cam_h_s * CAM_W / CAM_H)
+                cam_xs = SCREEN_W - cam_w_s - 5
+                cam_ys = SCREEN_H - cam_h_s - 5
+                cam_small = cv2.resize(frame, (cam_w_s, cam_h_s))
+                # bbox 그리기
+                if bbox:
+                    bx1, by1, bx2, by2 = bbox
+                    sw = cam_w_s / CAM_W; sh = cam_h_s / CAM_H
+                    cv2.rectangle(cam_small,
+                                  (int(bx1*sw), int(by1*sh)),
+                                  (int(bx2*sw), int(by2*sh)),
+                                  GESTURE_COLOR.get(stable_g, (255,255,255)), 1)
+                screen[cam_ys:cam_ys + cam_h_s, cam_xs:cam_xs + cam_w_s] = cam_small
+                cv2.rectangle(screen, (cam_xs - 1, cam_ys - 1),
+                              (cam_xs + cam_w_s + 1, cam_ys + cam_h_s + 1),
+                              (80, 80, 100), 1)
+                if detection_text:
+                    cv2.putText(screen, detection_text, (cam_xs, cam_ys - 4),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 220, 100), 1)
+
+                # ── 다음 노트 예고 (레인 상단) ──
+                if game.note_queue:
+                    nxt_type, nxt_g = game.note_queue[0]
+                    nxt_lx = LANE_X_POSITIONS[nxt_g]
+                    nxt_label = 'SHAKE' if nxt_type == NOTE_SHAKE \
+                        else 'AVOID' if nxt_type == NOTE_AVOID \
+                        else GESTURE_EMOJI.get(nxt_g, '?')
+                    cv2.putText(screen, f"▼{nxt_label}",
+                                (nxt_lx - 15, LANE_TOP - 5),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.4, (150, 150, 180), 1)
+
+                # ── 스테이지 종료 판정 ──
+                if not game.note_queue and \
+                        all(n['result_applied'] for n in game.lane_notes):
                     game.state = game.STAGE_CLEAR
 
-                if last_judge_result:
-                    draw_judgment_effect(screen, last_judge_result, now, last_judge_time)
-
             elif game.state == game.STAGE_CLEAR:
-                draw_hud(screen, game)
-                draw_stage_clear(screen, game)
+                draw_stage_clear(screen, game, now)
 
             elif game.state == game.GAME_OVER:
-                draw_game_over(screen, game)
+                draw_game_over(screen, game, now)
 
             elif game.state == game.ALL_CLEAR:
-                draw_all_clear(screen, game)
+                draw_all_clear(screen, game, now)
 
-            # ── FPS / 추론 latency 표시 ──
+            # ── FPS 표시 ──
             cur_time = time.time()
             fps = 1.0 / max(cur_time - fps_time, 0.001)
             fps_time = cur_time
-            cv2.putText(screen, f"FPS:{fps:.0f}  INF:{inf_latency_ms:.0f}ms",
-                        (SCREEN_W - 180, SCREEN_H - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (100, 100, 100), 1)
+            cv2.putText(screen, f"FPS:{fps:.0f} INF:{inf_latency_ms:.0f}ms",
+                        (SCREEN_W - 170, SCREEN_H - 6),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.38, (70, 70, 90), 1)
 
             cv2.imshow('RPS Rhythm', screen)
             cv2.waitKey(1)
@@ -1087,31 +1425,31 @@ def main():
             elif key_ch == ' ':
                 if game.state == game.TITLE:
                     game.reset()
-                    game.state = game.MEMORIZE
-                    game.generate_sequence()
-                    game.memorize_start = time.time()
-                    print(f"[Stage {game.stage_idx + 1}] 시퀀스: {game.sequence}")
+                    game.state = game.COUNTDOWN
+                    game.generate_notes()
+                    game.countdown_start = time.time()
+                    print(f"[Stage {game.stage_idx + 1}] 노트 수: {game.total_notes}")
                 elif game.state == game.STAGE_CLEAR:
                     game.stage_idx += 1
                     if game.stage_idx >= len(STAGES):
                         game.state = game.ALL_CLEAR
                     else:
-                        game.state = game.MEMORIZE
-                        game.generate_sequence()
-                        game.memorize_start = time.time()
-                        print(f"[Stage {game.stage_idx + 1}] 시퀀스: {game.sequence}")
+                        game.state = game.COUNTDOWN
+                        game.generate_notes()
+                        game.countdown_start = time.time()
+                        print(f"[Stage {game.stage_idx + 1}] 노트 수: {game.total_notes}")
                 elif game.state in (game.GAME_OVER, game.ALL_CLEAR):
                     game.reset()
-                    game.state = game.MEMORIZE
-                    game.generate_sequence()
-                    game.memorize_start = time.time()
-                    print(f"[Stage 1] 시퀀스: {game.sequence}")
+                    game.state = game.COUNTDOWN
+                    game.generate_notes()
+                    game.countdown_start = time.time()
+                    print(f"[Stage 1] 노트 수: {game.total_notes}")
     finally:
         kb.stop()
         worker.stop()
         release()
         cv2.destroyAllWindows()
-        print(f"\n최종 점수: {game.score} | 최대 콤보: {game.max_combo}")
+        print(f"\n최종 점수: {game.score:,} | 최대 콤보: {game.max_combo}")
 
 
 if __name__ == '__main__':
