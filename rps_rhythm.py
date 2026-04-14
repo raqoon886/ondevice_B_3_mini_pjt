@@ -106,11 +106,27 @@ for gesture_name, filename in {
             GESTURE_IMAGE[gesture_name] = image
 
 HEART_IMAGE = None
+HEART_CACHE = {}  # pre-resized heart icons: {size: {'active': (rgb, alpha), 'inactive': (rgb, alpha)}}
 heart_path = os.path.join(DATA_DIR, 'heart.png')
 if os.path.exists(heart_path):
     heart_img = load_image_with_transparency(heart_path)
     if heart_img is not None:
         HEART_IMAGE = heart_img
+
+def _cache_heart(size):
+    if size in HEART_CACHE or HEART_IMAGE is None:
+        return
+    resized = cv2.resize(HEART_IMAGE, (size, size), interpolation=cv2.INTER_AREA)
+    rgb = resized[:, :, :3]
+    a = resized[:, :, 3:] / 255.0 if resized.shape[2] == 4 else np.ones_like(rgb[:, :, :1])
+    dim_rgb = (rgb * 0.35).astype(np.uint8)
+    dim_a = a * 0.35
+    HEART_CACHE[size] = {
+        'active':   (rgb, a),
+        'inactive': (dim_rgb, dim_a),
+    }
+
+_cache_heart(24)
 
 SCORE_CORRECT = 200
 SCORE_BONUS_PER_COMBO = 30
@@ -293,7 +309,7 @@ class RPSDetector:
         """
         # ── ONNX/YOLO 분기: 한 번의 추론으로 검출+분류 ──
         if self.is_onnx:
-            results = self.model(frame, verbose=False)
+            results = self.model(frame, imgsz=320, verbose=False)
             if not results or len(results) == 0:
                 return None, 0.0, None
             res = results[0]
@@ -364,6 +380,8 @@ class InferenceWorker:
         self._thread.join(timeout=1.0)
 
     def set_enabled(self, on: bool):
+        if self._enabled == on:
+            return
         self._enabled = on
         if not on:
             with self._result_lock:
@@ -517,29 +535,43 @@ def get_required_gesture(mode, target):
 # ══════════════════════════════════════════════
 #  UI (v1과 동일)
 # ══════════════════════════════════════════════
-def draw_gesture_icon(img, gesture, cx, cy, size, alpha=1.0, highlight=False):
+_gesture_icon_cache = {}  # (gesture, icon_size) → (rgb, alpha_mask)
+
+def _get_cached_icon(gesture, icon_size):
+    key = (gesture, icon_size)
+    cached = _gesture_icon_cache.get(key)
+    if cached is not None:
+        return cached
     icon = GESTURE_IMAGE.get(gesture)
-    if icon is not None:
-        icon_size = max(1, int(size * 2))
-        icon_resized = cv2.resize(icon, (icon_size, icon_size), interpolation=cv2.INTER_AREA)
+    if icon is None:
+        return None
+    resized = cv2.resize(icon, (icon_size, icon_size), interpolation=cv2.INTER_AREA)
+    if resized.shape[2] == 4:
+        rgb = resized[:, :, :3]
+        a = resized[:, :, 3:] / 255.0
+    else:
+        rgb = resized
+        a = np.ones((icon_size, icon_size, 1), dtype=np.float32)
+    _gesture_icon_cache[key] = (rgb, a)
+    return (rgb, a)
+
+
+def draw_gesture_icon(img, gesture, cx, cy, size, alpha=1.0, highlight=False):
+    icon_size = max(1, int(size * 2))
+    cached = _get_cached_icon(gesture, icon_size)
+    if cached is not None:
+        icon_rgb, alpha_mask = cached
         x1 = cx - icon_size // 2
         y1 = cy - icon_size // 2
-        x2 = x1 + icon_size
-        y2 = y1 + icon_size
         x1i, y1i = max(0, x1), max(0, y1)
-        x2i, y2i = min(img.shape[1], x2), min(img.shape[0], y2)
-        ix1 = x1i - x1
-        iy1 = y1i - y1
+        x2i = min(img.shape[1], x1 + icon_size)
+        y2i = min(img.shape[0], y1 + icon_size)
+        ix1, iy1 = x1i - x1, y1i - y1
         ix2 = ix1 + (x2i - x1i)
         iy2 = iy1 + (y2i - y1i)
         roi = img[y1i:y2i, x1i:x2i]
-        icon_crop = icon_resized[iy1:iy2, ix1:ix2]
-        if icon_crop.shape[2] == 4:
-            alpha_mask = icon_crop[:, :, 3:] / 255.0
-            icon_rgb = icon_crop[:, :, :3]
-            roi[:] = (icon_rgb * alpha_mask + roi * (1 - alpha_mask)).astype(np.uint8)
-        else:
-            roi[:] = icon_crop
+        a = alpha_mask[iy1:iy2, ix1:ix2]
+        roi[:] = (icon_rgb[iy1:iy2, ix1:ix2] * a + roi * (1 - a)).astype(np.uint8)
         return
 
     color = GESTURE_COLOR.get(gesture, (200, 200, 200))
@@ -627,30 +659,22 @@ def draw_hud(img, game):
     for i in range(5):
         hx = SCREEN_W - 30 * (5 - i)
         color = (0, 0, 255) if i < game.lives else (60, 60, 60)
-        if HEART_IMAGE is not None:
-            heart_size = 24
-            icon_resized = cv2.resize(HEART_IMAGE, (heart_size, heart_size), interpolation=cv2.INTER_AREA)
+        heart_size = 24
+        cached = HEART_CACHE.get(heart_size)
+        if cached is not None:
+            key = 'active' if i < game.lives else 'inactive'
+            icon_rgb, alpha_mask = cached[key]
             x1 = hx - heart_size // 2
             y1 = 30 - heart_size // 2
-            x2 = x1 + heart_size
-            y2 = y1 + heart_size
             x1i, y1i = max(0, x1), max(0, y1)
-            x2i, y2i = min(img.shape[1], x2), min(img.shape[0], y2)
-            ix1 = x1i - x1
-            iy1 = y1i - y1
+            x2i = min(img.shape[1], x1 + heart_size)
+            y2i = min(img.shape[0], y1 + heart_size)
+            ix1, iy1 = x1i - x1, y1i - y1
             ix2 = ix1 + (x2i - x1i)
             iy2 = iy1 + (y2i - y1i)
             roi = img[y1i:y2i, x1i:x2i]
-            icon_crop = icon_resized[iy1:iy2, ix1:ix2]
-            if icon_crop.shape[2] == 4:
-                alpha_mask = icon_crop[:, :, 3:] / 255.0
-                icon_rgb = icon_crop[:, :, :3]
-                if i >= game.lives:
-                    icon_rgb = (icon_rgb * 0.35).astype(np.uint8)
-                    alpha_mask *= 0.35
-                roi[:] = (icon_rgb * alpha_mask + roi * (1 - alpha_mask)).astype(np.uint8)
-            else:
-                roi[:] = icon_crop
+            roi[:] = (icon_rgb[iy1:iy2, ix1:ix2] * alpha_mask[iy1:iy2, ix1:ix2]
+                      + roi * (1 - alpha_mask[iy1:iy2, ix1:ix2])).astype(np.uint8)
         else:
             cv2.putText(img, "<3", (hx, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
 
@@ -979,6 +1003,8 @@ def main():
     stable_g, stable_c = None, 0.0
     last_seen_seq = 0
 
+    screen = np.zeros((SCREEN_H, SCREEN_W, 3), dtype=np.uint8)
+
     print("\n=== RPS RHYTHM ===")
     print("터미널에서 키 입력:  SPACE=시작  q=종료\n")
 
@@ -991,7 +1017,7 @@ def main():
             frame = cv2.flip(frame, 1)
 
             now = time.time()
-            screen = np.zeros((SCREEN_H, SCREEN_W, 3), dtype=np.uint8)
+            screen[:] = 0
             frame_idx += 1
 
             # ── 추론 워커 제어 ──
