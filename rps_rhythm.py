@@ -820,6 +820,7 @@ def main():
             if frame is None:
                 time.sleep(0.005)
                 continue
+            frame = cv2.flip(frame, 1)
 
             now = time.time()
             screen = np.zeros((SCREEN_H, SCREEN_W, 3), dtype=np.uint8)
@@ -888,7 +889,6 @@ def main():
             elif game.state == game.PLAY:
                 draw_hud(screen, game)
                 draw_camera_feed(screen, frame, game, detection_text)
-                draw_sequence_bar(screen, game, now)
 
                 if game.current_note < len(game.sequence):
                     target = game.sequence[game.current_note]
