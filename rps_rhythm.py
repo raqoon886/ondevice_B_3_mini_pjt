@@ -661,12 +661,10 @@ def draw_title_screen(img, game):
         num_col  = (0, 255, 255)   if is_sel else (80, 80, 80)
         name_col = (255, 255, 255) if is_sel else (140, 140, 140)
         desc_col = (160, 220, 160) if is_sel else (70, 100, 70)
-        cv2.putText(img, f"{i}.", (box_x + 18, by + 42),
+        cv2.putText(img, f"{i}.", (box_x + 18, by + 50),
                     cv2.FONT_HERSHEY_SIMPLEX, 1.0, num_col, 2)
-        cv2.putText(img, MODE_KR[i], (box_x + 62, by + 42),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, name_col, 2)
-        cv2.putText(img, MODE_DESC[i], (box_x + 62, by + 70),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.52, desc_col, 1)
+        cv2.putText(img, MODE_DESC[i], (box_x + 62, by + 50),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.78, name_col, 2)
     blink = int(time.time() * 2) % 2
     if blink:
         start_text = "SPACE  →  Start"
