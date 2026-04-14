@@ -161,13 +161,17 @@ MODE_DESC    = [
 ]
 
 # ── 리듬 모드 전용 상수 ──
+LANE_W      = 100  # 레인 폭
+LANE_GAP    = 20   # 레인 간격
+_LANE_TOTAL = LANE_W * 3 + LANE_GAP * 2
+_LANE_START = SCREEN_W // 2 - _LANE_TOTAL // 2 + LANE_W // 2
 LANE_X_POSITIONS = {
-    'scissors': SCREEN_W // 2 - 140,
-    'rock':     SCREEN_W // 2,
-    'paper':    SCREEN_W // 2 + 140,
+    'scissors': _LANE_START,
+    'rock':     _LANE_START + LANE_W + LANE_GAP,
+    'paper':    _LANE_START + (LANE_W + LANE_GAP) * 2,
 }
 LANE_TOP    = 60
-LANE_BOTTOM = 520
+LANE_BOTTOM = 510
 JUDGE_Y     = LANE_BOTTOM
 NOTE_SPEED  = 180
 
@@ -184,19 +188,48 @@ NOTE_NORMAL = 'normal'
 NOTE_SHAKE  = 'shake'
 NOTE_AVOID  = 'avoid'
 
-STAGES_RHYTHM = [
-    # (노트수, 간격(초), BPM, 설명, shake비율, avoid비율)
-    (15, 1.2, 60,  "Intro",    0.0,  0.0),
-    (20, 1.0, 70,  "Easy 1",   0.0,  0.05),
-    (25, 0.9, 80,  "Easy 2",   0.1,  0.05),
-    (30, 0.8, 90,  "Normal 1", 0.15, 0.1),
-    (30, 0.7, 100, "Normal 2", 0.15, 0.1),
-    (35, 0.6, 110, "Hard 1",   0.2,  0.1),
-    (35, 0.55,115, "Hard 2",   0.2,  0.15),
-    (40, 0.5, 120, "Hard 3",   0.25, 0.15),
-    (40, 0.4, 130, "Expert 1", 0.25, 0.2),
-    (40, 0.3, 140, "Expert 2", 0.3,  0.2),
+# ── 3가지 난이도 스테이지 ──
+# 각 난이도는 여러 서브 스테이지로 구성
+# (노트수, 간격(초), BPM, 설명, shake비율, avoid비율)
+RHYTHM_DIFFICULTY = [
+    {   # 0: Easy
+        'name': 'EASY',
+        'color': (100, 255, 100),
+        'desc': 'Slow tempo, NORMAL notes only',
+        'icon': 'star1',
+        'stages': [
+            (12, 1.4, 55,  "Warm Up",   0.0,  0.0),
+            (18, 1.2, 65,  "Easy Flow", 0.0,  0.0),
+            (22, 1.0, 75,  "Cruise",    0.05, 0.0),
+        ],
+    },
+    {   # 1: Normal
+        'name': 'NORMAL',
+        'color': (0, 200, 255),
+        'desc': 'Mid tempo with SHAKE notes',
+        'icon': 'star2',
+        'stages': [
+            (25, 0.9, 85,  "Steady",     0.1,  0.0),
+            (30, 0.8, 95,  "Pick It Up", 0.15, 0.05),
+            (30, 0.7, 105, "Momentum",   0.15, 0.1),
+            (35, 0.65,110, "Push",       0.2,  0.1),
+        ],
+    },
+    {   # 2: Hard
+        'name': 'HARD',
+        'color': (80, 80, 255),
+        'desc': 'Fast tempo, SHAKE + AVOID mixed',
+        'icon': 'star3',
+        'stages': [
+            (35, 0.55, 120, "Overdrive",  0.2,  0.15),
+            (40, 0.45, 130, "Frenzy",     0.25, 0.15),
+            (40, 0.35, 140, "Inferno",    0.3,  0.2),
+        ],
+    },
 ]
+
+# 하위호환: get_rhythm_stage()에서 사용
+STAGES_RHYTHM = RHYTHM_DIFFICULTY[0]['stages']  # 기본값, 런타임에 교체됨
 
 
 # ══════════════════════════════════════════════
@@ -501,6 +534,7 @@ class PredictionSmoother:
 # ══════════════════════════════════════════════
 class GameState:
     TITLE = 'title'
+    STAGE_SELECT = 'stage_select'
     MEMORIZE = 'memorize'
     COUNTDOWN = 'countdown'
     PLAY = 'play'
@@ -512,6 +546,8 @@ class GameState:
     def __init__(self):
         self.selected_mode = 1  # 타이틀에서 선택한 모드 (persistent)
         self.mode = 1           # 현재 플레이 중인 모드 (reset해도 유지)
+        self.rhythm_difficulty = 0  # 리듬 모드 난이도 (0=Easy, 1=Normal, 2=Hard)
+        self.selected_difficulty = 0  # 스테이지 선택 화면 커서
         self.reset()
 
     def reset(self):
@@ -570,7 +606,11 @@ class GameState:
         return self.get_stage()[1]
 
     def get_rhythm_stage(self):
-        return STAGES_RHYTHM[min(self.stage_idx, len(STAGES_RHYTHM) - 1)]
+        stages = RHYTHM_DIFFICULTY[self.rhythm_difficulty]['stages']
+        return stages[min(self.stage_idx, len(stages) - 1)]
+
+    def rhythm_stages_count(self):
+        return len(RHYTHM_DIFFICULTY[self.rhythm_difficulty]['stages'])
 
     def generate_notes(self):
         n_notes, interval, bpm, name, shake_r, avoid_r = self.get_rhythm_stage()
@@ -760,164 +800,260 @@ def update_draw_particles(img, game, dt):
 
 
 def draw_glow_rect(img, x1, y1, x2, y2, color, thickness=2):
-    for i in range(3, 0, -1):
-        glow = tuple(int(c * 0.15 * i) for c in color)
-        cv2.rectangle(img, (x1 - i, y1 - i), (x2 + i, y2 + i), glow, thickness)
+    for i in range(4, 0, -1):
+        alpha = 0.12 * i
+        glow = tuple(int(c * alpha) for c in color)
+        cv2.rectangle(img, (x1 - i * 2, y1 - i), (x2 + i * 2, y2 + i), glow, thickness)
     cv2.rectangle(img, (x1, y1), (x2, y2), color, thickness)
 
 
+def _draw_lane_gradient(img, lx1, lx2, color):
+    """Draw a subtle vertical gradient inside a lane."""
+    h = LANE_BOTTOM - LANE_TOP
+    for row in range(h):
+        y = LANE_TOP + row
+        t = row / h
+        r = int(15 + color[0] * 0.04 * t)
+        g = int(15 + color[1] * 0.04 * t)
+        b = int(15 + color[2] * 0.04 * t)
+        cv2.line(img, (lx1 + 1, y), (lx2 - 1, y), (b, g, r), 1)
+
+
 def draw_lane_background(img, now):
-    lane_w = 80
+    lw = LANE_W
     for gesture, cx in LANE_X_POSITIONS.items():
-        lx1, lx2 = cx - lane_w // 2, cx + lane_w // 2
-        cv2.rectangle(img, (lx1, LANE_TOP), (lx2, LANE_BOTTOM), (25, 25, 35), -1)
-        cv2.rectangle(img, (lx1, LANE_TOP), (lx2, LANE_BOTTOM), GESTURE_COLOR[gesture], 1)
-        draw_glow_rect(img, lx1, JUDGE_Y - 3, lx2, JUDGE_Y + 3, GESTURE_COLOR[gesture])
+        lx1, lx2 = cx - lw // 2, cx + lw // 2
+        color = GESTURE_COLOR[gesture]
+        # lane fill with gradient
+        _draw_lane_gradient(img, lx1, lx2, color)
+        # lane border
+        cv2.rectangle(img, (lx1, LANE_TOP), (lx2, LANE_BOTTOM), color, 1)
+        # divider lines every 60px
+        for dy in range(LANE_TOP + 60, LANE_BOTTOM, 60):
+            cv2.line(img, (lx1 + 4, dy), (lx2 - 4, dy),
+                     tuple(int(c * 0.15) for c in color), 1)
+    # judge zone: bright horizontal bar spanning all lanes
+    all_lx1 = min(LANE_X_POSITIONS.values()) - lw // 2
+    all_lx2 = max(LANE_X_POSITIONS.values()) + lw // 2
+    cv2.rectangle(img, (all_lx1, JUDGE_Y - 4), (all_lx2, JUDGE_Y + 4),
+                  (60, 60, 60), -1)
+    for gesture, cx in LANE_X_POSITIONS.items():
+        color = GESTURE_COLOR[gesture]
+        lx1, lx2 = cx - lw // 2, cx + lw // 2
+        draw_glow_rect(img, lx1, JUDGE_Y - 4, lx2, JUDGE_Y + 4, color)
+    # gesture icons below lanes
+    for gesture, cx in LANE_X_POSITIONS.items():
+        draw_gesture_icon(img, gesture, cx, LANE_BOTTOM + 40, 22)
         label = GESTURE_KR[gesture]
-        ts = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)[0]
-        cv2.putText(img, label, (cx - ts[0] // 2, LANE_BOTTOM + 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, GESTURE_COLOR[gesture], 1)
-    for gesture, cx in LANE_X_POSITIONS.items():
-        draw_gesture_icon(img, gesture, cx, LANE_BOTTOM + 55, 18)
+        ts = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)[0]
+        cv2.putText(img, label, (cx - ts[0] // 2, LANE_BOTTOM + 65),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, GESTURE_COLOR[gesture], 1)
 
 
 def draw_lane_notes(img, game, now):
-    lane_w = 80
-    bar_h = 30
+    lw = LANE_W
+    bar_h = 36
+    corner_r = 8
     for note in game.lane_notes:
         cx = LANE_X_POSITIONS[note['gesture']]
-        x1, x2 = cx - lane_w // 2 + 4, cx + lane_w // 2 - 4
+        x1, x2 = cx - lw // 2 + 6, cx + lw // 2 - 6
         nc = NOTE_TYPE_COLORS[note['type']]
         if note['state'] == 'falling':
-            y1 = int(note['y']) - bar_h // 2
-            y2 = int(note['y']) + bar_h // 2
-            cv2.rectangle(img, (x1, y1), (x2, y2), nc, -1)
-            cv2.rectangle(img, (x1, y1), (x2, y2), (255, 255, 255), 1)
+            ny = int(note['y'])
+            y1 = ny - bar_h // 2
+            y2 = ny + bar_h // 2
+            # rounded filled rectangle
+            cv2.rectangle(img, (x1 + corner_r, y1), (x2 - corner_r, y2), nc, -1)
+            cv2.rectangle(img, (x1, y1 + corner_r), (x2, y2 - corner_r), nc, -1)
+            cv2.circle(img, (x1 + corner_r, y1 + corner_r), corner_r, nc, -1)
+            cv2.circle(img, (x2 - corner_r, y1 + corner_r), corner_r, nc, -1)
+            cv2.circle(img, (x1 + corner_r, y2 - corner_r), corner_r, nc, -1)
+            cv2.circle(img, (x2 - corner_r, y2 - corner_r), corner_r, nc, -1)
+            # icon inside note
+            draw_gesture_icon(img, note['gesture'], cx, ny, 12)
+            # type label above
             label = NOTE_TYPE_LABELS.get(note['type'], '')
             if label:
-                ts = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.35, 1)[0]
-                cv2.putText(img, label, (cx - ts[0] // 2, int(note['y']) + 5),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1)
+                ts = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.3, 1)[0]
+                cv2.putText(img, label, (cx - ts[0] // 2, y1 - 4),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.3, nc, 1)
         elif note['state'] == 'active':
             elapsed = now - note['active_start']
             progress = min(1.0, elapsed / note['max_active']) if note['max_active'] > 0 else 1.0
-            pulse = int(abs(math.sin(now * 8)) * 4)
+            pulse = int(abs(math.sin(now * 8)) * 5)
             y1 = JUDGE_Y - bar_h // 2 - pulse
             y2 = JUDGE_Y + bar_h // 2 + pulse
-            fill_x2 = x1 + int((x2 - x1) * progress)
-            cv2.rectangle(img, (x1, y1), (x2, y2), (40, 40, 40), -1)
-            cv2.rectangle(img, (x1, y1), (fill_x2, y2), nc, -1)
+            # dark bg
+            cv2.rectangle(img, (x1, y1), (x2, y2), (30, 30, 30), -1)
+            # progress fill
+            fill_w = int((x2 - x1) * progress)
+            cv2.rectangle(img, (x1, y1), (x1 + fill_w, y2), nc, -1)
+            # border glow
             draw_glow_rect(img, x1, y1, x2, y2, nc)
+            # circular progress arc
+            arc_cx, arc_cy = cx, y1 - 16
+            arc_r = 10
+            cv2.ellipse(img, (arc_cx, arc_cy), (arc_r, arc_r), -90, 0, 360, (40, 40, 40), 2)
+            cv2.ellipse(img, (arc_cx, arc_cy), (arc_r, arc_r), -90, 0,
+                        int(360 * progress),
+                        nc, 2)
+            # type label
             if note['type'] == NOTE_SHAKE:
-                cv2.putText(img, "SHAKE!", (cx - 25, y1 - 8),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 100, 255), 1)
+                cv2.putText(img, "SHAKE!", (cx - 28, y1 - 30),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 100, 255), 1)
             elif note['type'] == NOTE_AVOID:
-                cv2.putText(img, "AVOID!", (cx - 25, y1 - 8),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (80, 80, 255), 1)
+                cv2.putText(img, "AVOID!", (cx - 28, y1 - 30),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.45, (80, 80, 255), 1)
         elif note['state'] == 'judged':
             fade = max(0, 1.0 - (now - note['judge_time']) / 0.8)
             if fade > 0:
                 j = note['judgment']
                 color = tuple(int(c * fade) for c in JUDGMENT_COLORS.get(j, (200, 200, 200)))
                 label = j.upper() if j else '?'
-                ts = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)[0]
-                ty = JUDGE_Y - 25 - int((1.0 - fade) * 30)
+                scale = 0.7 + (1.0 - fade) * 0.3
+                ts = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, scale, 2)[0]
+                ty = JUDGE_Y - 20 - int((1.0 - fade) * 40)
                 cv2.putText(img, label, (cx - ts[0] // 2, ty),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+                            cv2.FONT_HERSHEY_SIMPLEX, scale, color, 2)
 
 
 def draw_rhythm_hud(img, game):
-    cv2.rectangle(img, (0, 0), (SCREEN_W, 52), (20, 20, 20), -1)
+    # background bar
+    overlay = img[0:55, :].copy()
+    cv2.rectangle(overlay, (0, 0), (SCREEN_W, 55), (15, 15, 25), -1)
+    img[0:55, :] = cv2.addWeighted(overlay, 0.85, img[0:55, :], 0.15, 0)
+    # separator line
+    diff_color = RHYTHM_DIFFICULTY[game.rhythm_difficulty]['color']
+    cv2.line(img, (0, 55), (SCREEN_W, 55), diff_color, 1)
+
     _, _, bpm, stage_name, _, _ = game.get_rhythm_stage()
-    cv2.putText(img, f"Stage {game.stage_idx + 1}: {stage_name}",
-                (10, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
-    cv2.putText(img, f"BPM:{bpm}", (10, 44),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180, 180, 180), 1)
-    cv2.putText(img, f"Score: {game.score}", (SCREEN_W // 2 - 60, 22),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-    cv2.putText(img, "Rhythm", (SCREEN_W - 100, 22),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 100, 255), 2)
+    diff_name = RHYTHM_DIFFICULTY[game.rhythm_difficulty]['name']
+    cv2.putText(img, f"{diff_name} - {stage_name}", (10, 22),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, diff_color, 2)
+    cv2.putText(img, f"BPM {bpm}  |  Stage {game.stage_idx + 1}/{game.rhythm_stages_count()}",
+                (10, 46), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (160, 160, 160), 1)
+
+    # score (center)
+    score_text = f"{game.score}"
+    ts = cv2.getTextSize(score_text, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)[0]
+    cv2.putText(img, score_text, (SCREEN_W // 2 - ts[0] // 2, 28),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+    label_ts = cv2.getTextSize("SCORE", cv2.FONT_HERSHEY_SIMPLEX, 0.3, 1)[0]
+    cv2.putText(img, "SCORE", (SCREEN_W // 2 - label_ts[0] // 2, 46),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.3, (120, 120, 120), 1)
+
+    # combo
     if game.combo > 1:
         if game.combo >= 30:
-            ct = f"{game.combo}x COMBO (x3.0)"
+            ct, cc = f"{game.combo}x  x3.0", (255, 100, 100)
         elif game.combo >= 15:
-            ct = f"{game.combo}x COMBO (x2.0)"
+            ct, cc = f"{game.combo}x  x2.0", (255, 200, 0)
         elif game.combo >= 5:
-            ct = f"{game.combo}x COMBO (x1.5)"
+            ct, cc = f"{game.combo}x  x1.5", (255, 255, 100)
         else:
-            ct = f"{game.combo}x COMBO"
-        cv2.putText(img, ct, (SCREEN_W // 2 - 70, 44),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 200, 0), 1)
-    cv2.putText(img, f"{game.judged_count}/{game.total_notes}",
-                (SCREEN_W // 2 + 100, 44),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180, 180, 180), 1)
+            ct, cc = f"{game.combo}x", (200, 200, 200)
+        cts = cv2.getTextSize(ct, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)[0]
+        cv2.putText(img, ct, (SCREEN_W // 2 - cts[0] // 2, LANE_TOP - 8),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, cc, 1)
+
+    # progress  judged/total
+    prog_text = f"{game.judged_count}/{game.total_notes}"
+    pts = cv2.getTextSize(prog_text, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)[0]
+    cv2.putText(img, prog_text, (SCREEN_W - pts[0] - 10, 46),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (160, 160, 160), 1)
+
+    # hearts (top right)
     for i in range(5):
-        hx = SCREEN_W - 30 * (5 - i)
-        heart_size = 24
+        hx = SCREEN_W - 28 * (5 - i) - 5
+        heart_size = 22
         cached = HEART_CACHE.get(heart_size)
+        if cached is None:
+            _cache_heart(heart_size)
+            cached = HEART_CACHE.get(heart_size)
         if cached is not None:
             key = 'active' if i < game.lives else 'inactive'
             icon_rgb, alpha_mask = cached[key]
-            hx1, hy1 = hx - heart_size // 2, 30 - heart_size // 2
+            hx1, hy1 = hx - heart_size // 2, 14 - heart_size // 2
             hx1i, hy1i = max(0, hx1), max(0, hy1)
             hx2i = min(img.shape[1], hx1 + heart_size)
             hy2i = min(img.shape[0], hy1 + heart_size)
             ix1, iy1 = hx1i - hx1, hy1i - hy1
             roi = img[hy1i:hy2i, hx1i:hx2i]
-            a = alpha_mask[iy1:iy1 + (hy2i - hy1i), ix1:ix1 + (hx2i - hx1i)]
-            r = icon_rgb[iy1:iy1 + (hy2i - hy1i), ix1:ix1 + (hx2i - hx1i)]
+            sh = (hy2i - hy1i, hx2i - hx1i)
+            a = alpha_mask[iy1:iy1 + sh[0], ix1:ix1 + sh[1]]
+            r = icon_rgb[iy1:iy1 + sh[0], ix1:ix1 + sh[1]]
             roi[:] = (r * a + roi * (1 - a)).astype(np.uint8)
         else:
             color = (0, 0, 255) if i < game.lives else (60, 60, 60)
-            cv2.putText(img, "<3", (hx, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
+            cv2.putText(img, "<3", (hx, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 2)
 
 
 def draw_rhythm_stage_clear(img, game):
-    cv2.putText(img, "STAGE CLEAR!", (SCREEN_W // 2 - 140, 180),
+    diff = RHYTHM_DIFFICULTY[game.rhythm_difficulty]
+    cv2.putText(img, "STAGE CLEAR!", (SCREEN_W // 2 - 140, 160),
                 cv2.FONT_HERSHEY_SIMPLEX, 1.3, (0, 255, 255), 3)
+    cv2.putText(img, f"{diff['name']} - Stage {game.stage_idx + 1}",
+                (SCREEN_W // 2 - 80, 195),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, diff['color'], 1)
     perfect = sum(1 for r, _ in game.results if r == 'perfect')
     good = sum(1 for r, _ in game.results if r == 'good')
     miss = sum(1 for r, _ in game.results if r == 'miss')
-    y = 240
-    cv2.putText(img, f"PERFECT: {perfect}", (SCREEN_W // 2 - 80, y),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
-    cv2.putText(img, f"GOOD:    {good}", (SCREEN_W // 2 - 80, y + 35),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 100), 2)
-    cv2.putText(img, f"MISS:    {miss}", (SCREEN_W // 2 - 80, y + 70),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-    cv2.putText(img, f"MAX COMBO: {game.max_combo}", (SCREEN_W // 2 - 80, y + 115),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 200, 0), 2)
-    cv2.putText(img, f"STAGE SCORE: {game.stage_score}", (SCREEN_W // 2 - 100, y + 155),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+    total = max(1, perfect + good + miss)
+    y = 230
+    bx = SCREEN_W // 2 - 120
+    # result bars
+    for label, count, color in [("PERFECT", perfect, (255, 255, 0)),
+                                 ("GOOD", good, (0, 255, 100)),
+                                 ("MISS", miss, (0, 0, 255))]:
+        cv2.putText(img, f"{label}:", (bx, y + 5),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1)
+        bar_x = bx + 110
+        bar_w = 120
+        cv2.rectangle(img, (bar_x, y - 10), (bar_x + bar_w, y + 5), (40, 40, 40), -1)
+        fill = int(bar_w * count / total) if total > 0 else 0
+        cv2.rectangle(img, (bar_x, y - 10), (bar_x + fill, y + 5), color, -1)
+        cv2.putText(img, str(count), (bar_x + bar_w + 8, y + 5),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+        y += 35
+    cv2.putText(img, f"MAX COMBO: {game.max_combo}", (bx, y + 10),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 200, 0), 2)
+    cv2.putText(img, f"STAGE SCORE: {game.stage_score}", (bx, y + 50),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
     blink = int(time.time() * 2) % 2
     if blink:
-        cv2.putText(img, "Press SPACE for Next Stage", (SCREEN_W // 2 - 155, y + 210),
+        cv2.putText(img, "Press SPACE for Next Stage", (SCREEN_W // 2 - 155, y + 105),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.65, (200, 200, 200), 1)
 
 
 def _rhythm_play_tick(screen, frame, game, now, stable_g):
     dt = now - game._prev_t if game._prev_t > 0 else 0.016
     game._prev_t = now
+    # spawn notes from queue
     if game.note_queue and now >= game.next_spawn_t:
         ntype, gesture = game.note_queue.pop(0)
         spawn_lane_note(game, ntype, gesture)
         _, interval, _, _, _, _ = game.get_rhythm_stage()
         game.next_spawn_t = now + interval
     update_lane_notes(game, dt, game.last_detection, now)
+    # draw
     draw_rhythm_hud(screen, game)
     draw_lane_background(screen, now)
     draw_lane_notes(screen, game, now)
     update_draw_particles(screen, game, dt)
-    cam_w, cam_h = 180, 135
+    # camera feed (left side, below lanes)
+    cam_w, cam_h = 160, 120
     cam_small = cv2.resize(frame, (cam_w, cam_h))
-    sx, sy = SCREEN_W - cam_w - 10, SCREEN_H - cam_h - 30
+    sx, sy = 8, SCREEN_H - cam_h - 8
     screen[sy:sy + cam_h, sx:sx + cam_w] = cam_small
     cv2.rectangle(screen, (sx - 1, sy - 1),
-                  (sx + cam_w + 1, sy + cam_h + 1), (80, 80, 80), 1)
+                  (sx + cam_w + 1, sy + cam_h + 1), (60, 60, 60), 1)
+    # detection label & highlight on camera
     if stable_g:
-        cv2.putText(screen, GESTURE_KR[stable_g], (sx, sy - 5),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5,
-                    GESTURE_COLOR.get(stable_g, (200, 200, 200)), 1)
+        gc = GESTURE_COLOR.get(stable_g, (200, 200, 200))
+        cv2.rectangle(screen, (sx - 2, sy - 2),
+                      (sx + cam_w + 2, sy + cam_h + 2), gc, 2)
+        draw_gesture_icon(screen, stable_g, sx + cam_w + 28, sy + cam_h // 2, 20)
+    # end conditions
     if (game.judged_count >= game.total_notes
             and not game.note_queue and not game.lane_notes):
         game.state = game.STAGE_CLEAR
@@ -1137,6 +1273,83 @@ def draw_title_screen(img, game):
         text_size = cv2.getTextSize(start_text, cv2.FONT_HERSHEY_SIMPLEX, 1.0, 2)[0]
         cv2.putText(img, start_text, (SCREEN_W // 2 - text_size[0] // 2, 600),
                     cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
+
+
+def draw_stage_select_screen(img, game):
+    cv2.rectangle(img, (0, 0), (SCREEN_W, SCREEN_H), (15, 15, 30), -1)
+    # title
+    title = "SELECT DIFFICULTY"
+    ts = cv2.getTextSize(title, cv2.FONT_HERSHEY_SIMPLEX, 1.4, 3)[0]
+    cv2.putText(img, title, (SCREEN_W // 2 - ts[0] // 2, 80),
+                cv2.FONT_HERSHEY_SIMPLEX, 1.4, (255, 100, 255), 3)
+    sub = "UP/DOWN to select, SPACE to start, B to go back"
+    sts = cv2.getTextSize(sub, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)[0]
+    cv2.putText(img, sub, (SCREEN_W // 2 - sts[0] // 2, 115),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (140, 140, 140), 1)
+    # difficulty cards
+    card_w = 580
+    card_h = 130
+    card_x = SCREEN_W // 2 - card_w // 2
+    for i, diff in enumerate(RHYTHM_DIFFICULTY):
+        is_sel = (i == game.selected_difficulty)
+        cy = 150 + i * (card_h + 15)
+        # card background
+        bg = (30, 40, 55) if is_sel else (18, 18, 30)
+        cv2.rectangle(img, (card_x, cy), (card_x + card_w, cy + card_h), bg, -1)
+        if is_sel:
+            cv2.rectangle(img, (card_x, cy), (card_x + card_w, cy + card_h),
+                          diff['color'], 2)
+            # selection indicator
+            cv2.circle(img, (card_x - 15, cy + card_h // 2), 6, diff['color'], -1)
+        # difficulty name
+        name_col = diff['color'] if is_sel else tuple(int(c * 0.5) for c in diff['color'])
+        cv2.putText(img, diff['name'], (card_x + 20, cy + 35),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, name_col, 2)
+        # stars
+        n_stars = i + 1
+        for s in range(3):
+            sx = card_x + 200 + s * 25
+            star_col = diff['color'] if (s < n_stars and is_sel) else (50, 50, 50)
+            cv2.putText(img, "*", (sx, cy + 35),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, star_col, 2)
+        # description
+        desc_col = (180, 180, 180) if is_sel else (80, 80, 80)
+        cv2.putText(img, diff['desc'], (card_x + 20, cy + 65),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, desc_col, 1)
+        # stage count & BPM range
+        stages = diff['stages']
+        bpm_min = min(s[2] for s in stages)
+        bpm_max = max(s[2] for s in stages)
+        info = f"{len(stages)} stages  |  BPM {bpm_min}-{bpm_max}  |  {sum(s[0] for s in stages)} notes"
+        info_col = (140, 140, 140) if is_sel else (60, 60, 60)
+        cv2.putText(img, info, (card_x + 20, cy + 92),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, info_col, 1)
+        # note type preview
+        if is_sel:
+            has_shake = any(s[4] > 0 for s in stages)
+            has_avoid = any(s[5] > 0 for s in stages)
+            types_y = cy + 115
+            tx = card_x + 20
+            cv2.circle(img, (tx + 6, types_y - 4), 5, NOTE_TYPE_COLORS[NOTE_NORMAL], -1)
+            cv2.putText(img, "NORMAL", (tx + 16, types_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.35, (180, 180, 180), 1)
+            tx += 90
+            if has_shake:
+                cv2.circle(img, (tx + 6, types_y - 4), 5, NOTE_TYPE_COLORS[NOTE_SHAKE], -1)
+                cv2.putText(img, "SHAKE", (tx + 16, types_y),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.35, (180, 180, 180), 1)
+                tx += 80
+            if has_avoid:
+                cv2.circle(img, (tx + 6, types_y - 4), 5, NOTE_TYPE_COLORS[NOTE_AVOID], -1)
+                cv2.putText(img, "AVOID", (tx + 16, types_y),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.35, (180, 180, 180), 1)
+    # blink prompt
+    blink = int(time.time() * 2) % 2
+    if blink:
+        prompt = "SPACE to Start"
+        pts = cv2.getTextSize(prompt, cv2.FONT_HERSHEY_SIMPLEX, 0.9, 2)[0]
+        cv2.putText(img, prompt, (SCREEN_W // 2 - pts[0] // 2, 595),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
 
 
 def draw_memorize_screen(img, game, now):
@@ -1489,9 +1702,12 @@ def main():
                 last_seen_seq = 0
                 game.last_detection = None
 
-            # ── 상태 머신 (v1과 동일) ──
+            # ── 상태 머신 ──
             if game.state == game.TITLE:
                 draw_title_screen(screen, game)
+
+            elif game.state == game.STAGE_SELECT:
+                draw_stage_select_screen(screen, game)
 
             elif game.state == game.MEMORIZE:
                 draw_hud(screen, game)
@@ -1694,16 +1910,29 @@ def main():
                         if _box_x <= mx <= _box_x + _box_w and _by <= my <= _by + 72:
                             game.selected_mode = _i
                             game.mode = _i
-                            game.reset()
                             if _i == 4:
-                                game.generate_notes()
-                                game.state = game.COUNTDOWN
-                                game.countdown_start = time.time()
+                                game.state = game.STAGE_SELECT
                             else:
+                                game.reset()
                                 game.state = game.MEMORIZE
                                 game.generate_sequence()
                                 game.memorize_start = time.time()
-                            print(f"[Mode: {GAME_MODES[game.mode]}] [Stage {game.stage_idx + 1}]")
+                                print(f"[Mode: {GAME_MODES[game.mode]}] [Stage {game.stage_idx + 1}]")
+                            break
+                elif game.state == game.STAGE_SELECT:
+                    _card_w = 580
+                    _card_h = 130
+                    _card_x = SCREEN_W // 2 - _card_w // 2
+                    for _i in range(3):
+                        _cy = 150 + _i * (_card_h + 15)
+                        if _card_x <= mx <= _card_x + _card_w and _cy <= my <= _cy + _card_h:
+                            game.selected_difficulty = _i
+                            game.rhythm_difficulty = _i
+                            game.reset()
+                            game.generate_notes()
+                            game.state = game.COUNTDOWN
+                            game.countdown_start = time.time()
+                            print(f"[Rhythm {RHYTHM_DIFFICULTY[_i]['name']}] [Stage 1]")
                             break
 
             # ── 키 입력 ──
@@ -1713,28 +1942,43 @@ def main():
             elif key_ch in ('0', '1', '2', '3', '4'):
                 if game.state == game.TITLE:
                     game.selected_mode = int(key_ch)
+                elif game.state == game.STAGE_SELECT:
+                    if key_ch in ('0', '1', '2'):
+                        game.selected_difficulty = int(key_ch)
             elif key_ch in ('UP', 'LEFT'):
                 if game.state == game.TITLE:
                     game.selected_mode = (game.selected_mode - 1) % 5
+                elif game.state == game.STAGE_SELECT:
+                    game.selected_difficulty = (game.selected_difficulty - 1) % 3
             elif key_ch in ('DOWN', 'RIGHT'):
                 if game.state == game.TITLE:
                     game.selected_mode = (game.selected_mode + 1) % 5
+                elif game.state == game.STAGE_SELECT:
+                    game.selected_difficulty = (game.selected_difficulty + 1) % 3
+            elif key_ch == '\x1b' or key_ch == 'b':
+                if game.state == game.STAGE_SELECT:
+                    game.state = game.TITLE
             elif key_ch == ' ':
                 if game.state == game.TITLE:
                     game.mode = game.selected_mode
-                    game.reset()
                     if game.mode == 4:
-                        game.generate_notes()
-                        game.state = game.COUNTDOWN
-                        game.countdown_start = time.time()
+                        game.state = game.STAGE_SELECT
                     else:
+                        game.reset()
                         game.state = game.MEMORIZE
                         game.generate_sequence()
                         game.memorize_start = time.time()
-                    print(f"[Mode: {GAME_MODES[game.mode]}] [Stage {game.stage_idx + 1}]")
+                        print(f"[Mode: {GAME_MODES[game.mode]}] [Stage {game.stage_idx + 1}]")
+                elif game.state == game.STAGE_SELECT:
+                    game.rhythm_difficulty = game.selected_difficulty
+                    game.reset()
+                    game.generate_notes()
+                    game.state = game.COUNTDOWN
+                    game.countdown_start = time.time()
+                    print(f"[Rhythm {RHYTHM_DIFFICULTY[game.rhythm_difficulty]['name']}] [Stage 1]")
                 elif game.state == game.STAGE_CLEAR:
                     game.stage_idx += 1
-                    stages_len = len(STAGES_RHYTHM) if game.mode == 4 else len(STAGES)
+                    stages_len = game.rhythm_stages_count() if game.mode == 4 else len(STAGES)
                     if game.stage_idx >= stages_len:
                         game.state = game.ALL_CLEAR
                     elif game.mode == 4:
@@ -1748,16 +1992,14 @@ def main():
                         game.memorize_start = time.time()
                         print(f"[Stage {game.stage_idx + 1}] 시퀀스: {game.sequence}")
                 elif game.state in (game.GAME_OVER, game.ALL_CLEAR):
-                    game.reset()
                     if game.mode == 4:
-                        game.generate_notes()
-                        game.state = game.COUNTDOWN
-                        game.countdown_start = time.time()
+                        game.state = game.STAGE_SELECT
                     else:
+                        game.reset()
                         game.state = game.MEMORIZE
                         game.generate_sequence()
                         game.memorize_start = time.time()
-                    print(f"[Stage 1]")
+                    print(f"[Restart]")
     finally:
         kb.stop()
         worker.stop()
