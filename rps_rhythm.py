@@ -53,7 +53,8 @@ except ImportError:
 # ══════════════════════════════════════════════
 SCREEN_W = 820
 SCREEN_H = 620
-CAM_W, CAM_H = 320, 240
+CAM_CAPTURE_W, CAM_CAPTURE_H = 320, 240
+CAM_W, CAM_H = 500, 375
 IMG_SIZE = 224
 OFFSET = 30
 
@@ -115,7 +116,7 @@ STAGES = [
 #  - 메인은 항상 "최신 프레임"만 가져감 (blocking 없음)
 # ══════════════════════════════════════════════
 class ThreadedCamera:
-    def __init__(self, src=0, w=CAM_W, h=CAM_H, fps=CAM_FPS_TARGET):
+    def __init__(self, src=0, w=CAM_CAPTURE_W, h=CAM_CAPTURE_H, fps=CAM_FPS_TARGET):
         self.cap = cv2.VideoCapture(src)
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, w)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)
