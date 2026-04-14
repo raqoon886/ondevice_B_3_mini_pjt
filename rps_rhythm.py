@@ -887,9 +887,22 @@ class KeyboardReader:
         while self._running:
             try:
                 ch = sys.stdin.read(1)
-                if ch:
-                    with self._lock:
-                        self._key_buffer.append(ch)
+                if not ch:
+                    continue
+                if ch == '\x1b':
+                    # 방향키 이스케이프 시퀀스 처리 (ESC [ A/B/C/D)
+                    try:
+                        ch2 = sys.stdin.read(1)
+                        if ch2 == '[':
+                            ch3 = sys.stdin.read(1)
+                            ch = {'A': 'UP', 'B': 'DOWN',
+                                  'C': 'RIGHT', 'D': 'LEFT'}.get(ch3, '\x1b')
+                        else:
+                            ch = '\x1b'
+                    except Exception:
+                        ch = '\x1b'
+                with self._lock:
+                    self._key_buffer.append(ch)
             except Exception:
                 break
 
@@ -976,6 +989,18 @@ def main():
 
     cv2.namedWindow('RPS Rhythm', cv2.WINDOW_NORMAL)
     cv2.resizeWindow('RPS Rhythm', SCREEN_W, SCREEN_H)
+
+    # ── 마우스/터치 콜백 ──
+    _mouse_clicks = []
+    _mouse_lock = threading.Lock()
+
+    def _mouse_cb(event, x, y, flags, param):
+        if event == cv2.EVENT_LBUTTONDOWN:
+            with _mouse_lock:
+                _mouse_clicks.append((x, y))
+
+    cv2.setMouseCallback('RPS Rhythm', _mouse_cb)
+
     if tk is not None:
         try:
             root = tk.Tk()
@@ -1251,6 +1276,20 @@ def main():
             cv2.imshow('RPS Rhythm', screen)
             cv2.waitKey(1)
 
+            # ── 마우스/터치 클릭 처리 ──
+            with _mouse_lock:
+                clicks = _mouse_clicks[:]
+                _mouse_clicks.clear()
+            for (mx, my) in clicks:
+                if game.state == game.TITLE:
+                    _box_x = SCREEN_W // 2 - 310
+                    _box_w = 620
+                    for _i in range(4):
+                        _by = 165 + _i * 100
+                        if _box_x <= mx <= _box_x + _box_w and _by <= my <= _by + 82:
+                            game.selected_mode = _i
+                            break
+
             # ── 키 입력 ──
             key_ch = kb.get_key()
             if key_ch == 'q':
@@ -1258,6 +1297,12 @@ def main():
             elif key_ch in ('0', '1', '2', '3'):
                 if game.state == game.TITLE:
                     game.selected_mode = int(key_ch)
+            elif key_ch in ('UP', 'LEFT'):
+                if game.state == game.TITLE:
+                    game.selected_mode = (game.selected_mode - 1) % 4
+            elif key_ch in ('DOWN', 'RIGHT'):
+                if game.state == game.TITLE:
+                    game.selected_mode = (game.selected_mode + 1) % 4
             elif key_ch == ' ':
                 if game.state == game.TITLE:
                     game.mode = game.selected_mode
