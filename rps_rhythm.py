@@ -716,7 +716,7 @@ def draw_title_screen(img, game):
                     cv2.FONT_HERSHEY_SIMPLEX, 0.78, name_col, 2)
     blink = int(time.time() * 2) % 2
     if blink:
-        start_text = "SPACE  →  Start"
+        start_text = "SPACE to Start"
         text_size = cv2.getTextSize(start_text, cv2.FONT_HERSHEY_SIMPLEX, 1.0, 2)[0]
         cv2.putText(img, start_text, (SCREEN_W // 2 - text_size[0] // 2, 600),
                     cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
@@ -726,9 +726,9 @@ def draw_memorize_screen(img, game, now):
     elapsed = now - game.memorize_start
     remaining = game.preview_time() - elapsed
     if game.mode == 2:
-        memo_title, title_color = "MEMORIZE!  →  BEAT EACH", (100, 255, 100)
+        memo_title, title_color = "MEMORIZE! > BEAT EACH", (100, 255, 100)
     elif game.mode == 3:
-        memo_title, title_color = "MEMORIZE!  →  LOSE TO EACH", (120, 120, 255)
+        memo_title, title_color = "MEMORIZE! > LOSE TO EACH", (120, 120, 255)
     else:
         memo_title, title_color = "MEMORIZE!", (255, 200, 0)
     text_size = cv2.getTextSize(memo_title, cv2.FONT_HERSHEY_SIMPLEX, 1.1, 2)[0]
