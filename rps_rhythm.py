@@ -53,7 +53,7 @@ except ImportError:
 # ══════════════════════════════════════════════
 SCREEN_W = 820
 SCREEN_H = 620
-CAM_W, CAM_H = 320, 240
+CAM_W, CAM_H = 440, 330
 IMG_SIZE = 224
 OFFSET = 30
 
@@ -76,6 +76,23 @@ GESTURE_COLOR = {
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(SCRIPT_DIR, 'data')
+
+
+def load_image_with_transparency(path):
+    image = cv2.imread(path, cv2.IMREAD_UNCHANGED)
+    if image is None:
+        return None
+    if image.ndim == 3 and image.shape[2] == 3:
+        alpha = np.full((image.shape[0], image.shape[1], 1), 255, dtype=np.uint8)
+        image = np.dstack([image, alpha])
+    if image.shape[2] == 4 and image[:, :, 3].min() == 255:
+        rgb = image[:, :, :3].astype(np.int16)
+        gray_mask = (np.abs(rgb[:, :, 0] - rgb[:, :, 1]) < 20) & \
+                    (np.abs(rgb[:, :, 0] - rgb[:, :, 2]) < 20)
+        bright_mask = (rgb[:, :, 0] > 140) & (rgb[:, :, 1] > 140) & (rgb[:, :, 2] > 140)
+        image[gray_mask & bright_mask, 3] = 0
+    return image
+
 GESTURE_IMAGE = {}
 for gesture_name, filename in {
         'scissors': 'scissors.png',
@@ -84,9 +101,16 @@ for gesture_name, filename in {
     }.items():
     image_path = os.path.join(DATA_DIR, filename)
     if os.path.exists(image_path):
-        image = cv2.imread(image_path, cv2.IMREAD_UNCHANGED)
+        image = load_image_with_transparency(image_path)
         if image is not None:
             GESTURE_IMAGE[gesture_name] = image
+
+HEART_IMAGE = None
+heart_path = os.path.join(DATA_DIR, 'heart.png')
+if os.path.exists(heart_path):
+    heart_img = load_image_with_transparency(heart_path)
+    if heart_img is not None:
+        HEART_IMAGE = heart_img
 
 SCORE_CORRECT = 200
 SCORE_BONUS_PER_COMBO = 30
@@ -574,7 +598,32 @@ def draw_hud(img, game):
     for i in range(5):
         hx = SCREEN_W - 30 * (5 - i)
         color = (0, 0, 255) if i < game.lives else (60, 60, 60)
-        cv2.putText(img, "<3", (hx, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
+        if HEART_IMAGE is not None:
+            heart_size = 24
+            icon_resized = cv2.resize(HEART_IMAGE, (heart_size, heart_size), interpolation=cv2.INTER_AREA)
+            x1 = hx - heart_size // 2
+            y1 = 30 - heart_size // 2
+            x2 = x1 + heart_size
+            y2 = y1 + heart_size
+            x1i, y1i = max(0, x1), max(0, y1)
+            x2i, y2i = min(img.shape[1], x2), min(img.shape[0], y2)
+            ix1 = x1i - x1
+            iy1 = y1i - y1
+            ix2 = ix1 + (x2i - x1i)
+            iy2 = iy1 + (y2i - y1i)
+            roi = img[y1i:y2i, x1i:x2i]
+            icon_crop = icon_resized[iy1:iy2, ix1:ix2]
+            if icon_crop.shape[2] == 4:
+                alpha_mask = icon_crop[:, :, 3:] / 255.0
+                icon_rgb = icon_crop[:, :, :3]
+                if i >= game.lives:
+                    icon_rgb = (icon_rgb * 0.35).astype(np.uint8)
+                    alpha_mask *= 0.35
+                roi[:] = (icon_rgb * alpha_mask + roi * (1 - alpha_mask)).astype(np.uint8)
+            else:
+                roi[:] = icon_crop
+        else:
+            cv2.putText(img, "<3", (hx, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
 
 
 def draw_camera_feed(img, frame, game, detection_text):
