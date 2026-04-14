@@ -731,11 +731,11 @@ class KeyboardReader:
 def find_default_model():
     base = os.path.dirname(__file__)
     candidates = [
+        os.path.join(base, 'models', 'best.onnx'),
         os.path.join(base, 'models', 'rps_mobilenetv2.tflite'),
         os.path.join(base, 'models', 'rps_mobilenetv2_qat.tflite'),
         os.path.join(base, 'models', 'rps_mobilenetv2_ptq_int8.tflite'),
         os.path.join(base, 'models', 'RPS_MobileNetV2_Augmentation.tflite'),
-        os.path.join(base, 'models', 'best.onnx'),
         os.path.join(base, '..', 'examples', '03_CNN_Based_On-Device_AI',
                      'RPS_MobileNetV2_Augmentation.tflite'),
         os.path.join(base, '..', 'examples', '03_CNN_Based_On-Device_AI',
