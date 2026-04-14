@@ -813,7 +813,11 @@ def main():
 
     detector = RPSDetector(model_path, num_threads=TFLITE_THREADS)
     game = GameState()
-    smoother = PredictionSmoother()
+    # ONNX(YOLO)는 conf가 항상 높아 히스토리를 빠르게 교체해야 클래스 전환이 빠름
+    if is_onnx:
+        smoother = PredictionSmoother(window=2, conf_th=0.4)
+    else:
+        smoother = PredictionSmoother()
 
     # 카메라
     if args.no_thread_cam:
@@ -883,6 +887,10 @@ def main():
                 # 새 추론 결과일 때만 smoother 업데이트
                 if seq != last_seen_seq:
                     last_seen_seq = seq
+                    prev_stable = stable_g
+                    # 감지 클래스가 바뀌면 smoother를 즉시 리셋해 이전 히스토리 제거
+                    if g is not None and prev_stable is not None and g != prev_stable:
+                        smoother.reset()
                     stable_g, stable_c = smoother.update(g, c)
                 # stable_g 는 새 결과 없을 때 이전 값 유지 (메인루프 60Hz가 영향 X)
                 if stable_g:
