@@ -132,8 +132,8 @@ _cache_heart(24)
 
 SCORE_CORRECT = 200
 SCORE_BONUS_PER_COMBO = 30
-HOLD_TIME = 1.0           # 같은 제스처를 N초 이상 유지해야 확정 (시간 기반)
-COOLDOWN_TIME = 0.8     # 확정 후 다음 입력 받기까지 대기 (같은 제스처 연속 입력 가능)
+HOLD_TIME = 0.5           # 같은 제스처를 N초 이상 유지해야 확정 (시간 기반)
+COOLDOWN_TIME = 0.5     # 확정 후 다음 입력 받기까지 대기 (같은 제스처 연속 입력 가능)
 TIME_LIMIT_PER_NOTE = 8
 
 STAGES = [
@@ -676,14 +676,12 @@ def draw_hud(img, game):
                 cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180, 180, 180), 1)
     cv2.putText(img, f"Score: {game.score}", (SCREEN_W // 2 - 60, 22),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-    mode_hud_colors = [(180, 180, 180), (0, 200, 200), (100, 255, 100), (120, 120, 255), (255, 100, 255)]
-    cv2.putText(img, GAME_MODES[game.mode], (SCREEN_W - 100, 22),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.55, mode_hud_colors[game.mode], 2)
     if game.combo > 1:
         cv2.putText(img, f"{game.combo}x COMBO", (SCREEN_W // 2 - 50, 44),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 200, 0), 1)
+    # 하트 (오른쪽 끝)
     for i in range(5):
-        hx = SCREEN_W - 30 * (5 - i)
+        hx = SCREEN_W - 28 * (5 - i) - 5
         color = (0, 0, 255) if i < game.lives else (60, 60, 60)
         heart_size = 24
         cached = HEART_CACHE.get(heart_size)
@@ -703,6 +701,13 @@ def draw_hud(img, game):
                       + roi * (1 - alpha_mask[iy1:iy2, ix1:ix2])).astype(np.uint8)
         else:
             cv2.putText(img, "<3", (hx, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
+    # 게임 모드 (하트 왼쪽)
+    mode_hud_colors = [(180, 180, 180), (0, 200, 200), (100, 255, 100), (120, 120, 255), (255, 100, 255)]
+    _heart_left = SCREEN_W - 28 * 5 - 5 - 12
+    _mode_txt = GAME_MODES[game.mode]
+    _mts = cv2.getTextSize(_mode_txt, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)[0]
+    cv2.putText(img, _mode_txt, (_heart_left - _mts[0], 22),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, mode_hud_colors[game.mode], 1)
 
 
 def draw_camera_feed(img, frame, game, detection_text):
@@ -1218,16 +1223,7 @@ def main():
                     hbar_x = SCREEN_W // 2 - hbar_w // 2
                     hbar_y = 145
                     if in_cooldown:
-                        # 쿨다운 진행 바 (회색)
-                        cd_progress = 1.0 - (game.cooldown_until - now) / COOLDOWN_TIME
-                        cv2.rectangle(screen, (hbar_x, hbar_y),
-                                      (hbar_x + hbar_w, hbar_y + 10),
-                                      (50, 50, 50), -1)
-                        cv2.rectangle(screen, (hbar_x, hbar_y),
-                                      (hbar_x + int(hbar_w * cd_progress), hbar_y + 10),
-                                      (120, 120, 120), -1)
-                        cv2.putText(screen, "WAIT...", (hbar_x, hbar_y - 4),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180, 180, 180), 1)
+                        pass  # 쿨다운 중 별도 표시 없음
                     elif game.confirm_gesture and game.hold_start_time > 0:
                         # HOLD 진행 바 (제스처 색상)
                         held = min(now - game.hold_start_time, HOLD_TIME)
@@ -1364,6 +1360,30 @@ def main():
                             game.countdown_start = time.time()
                             print(f"[Rhythm {rhythm_mode.RHYTHM_DIFFICULTY[_i]['name']}] [Stage 1]")
                             break
+                elif game.state == game.STAGE_CLEAR:
+                    game.stage_idx += 1
+                    stages_len = rhythm_mode.rhythm_stages_count(game) if game.mode == 4 else len(STAGES)
+                    if game.stage_idx >= stages_len:
+                        game.state = game.ALL_CLEAR
+                    elif game.mode == 4:
+                        rhythm_mode.generate_notes(game)
+                        game.state = game.COUNTDOWN
+                        game.countdown_start = time.time()
+                        print(f"[Stage {game.stage_idx + 1}]")
+                    else:
+                        game.state = game.MEMORIZE
+                        game.generate_sequence()
+                        game.memorize_start = time.time()
+                        print(f"[Stage {game.stage_idx + 1}]")
+                elif game.state in (game.GAME_OVER, game.ALL_CLEAR):
+                    if game.mode == 4:
+                        game.state = game.STAGE_SELECT
+                    else:
+                        game.reset()
+                        game.state = game.MEMORIZE
+                        game.generate_sequence()
+                        game.memorize_start = time.time()
+                    print("[Restart]")
 
             # ── 키 입력 ──
             key_ch = kb.get_key()
