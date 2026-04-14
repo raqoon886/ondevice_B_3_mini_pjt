@@ -20,6 +20,7 @@ v1 대비 변경점:
 
 조작:
   SPACE → 게임 시작 / 다음 스테이지 / 재시작
+  B/ESC → 선택 화면으로 돌아가기
   q     → 종료
 """
 
@@ -1023,6 +1024,8 @@ def draw_rhythm_stage_clear(img, game):
     if blink:
         cv2.putText(img, "Press SPACE for Next Stage", (SCREEN_W // 2 - 155, y + 105),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.65, (200, 200, 200), 1)
+        cv2.putText(img, "Press B for Mode Select", (SCREEN_W // 2 - 125, y + 135),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (170, 170, 170), 1)
 
 
 def _rhythm_play_tick(screen, frame, game, now, stable_g):
@@ -1438,6 +1441,8 @@ def draw_stage_clear(img, game):
     if blink:
         cv2.putText(img, "Press SPACE for Next Stage", (SCREEN_W // 2 - 155, y + 175),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.65, (200, 200, 200), 1)
+        cv2.putText(img, "Press B for Mode Select", (SCREEN_W // 2 - 125, y + 210),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (170, 170, 170), 1)
 
 
 def draw_game_over(img, game):
@@ -1452,6 +1457,8 @@ def draw_game_over(img, game):
     if blink:
         cv2.putText(img, "Press SPACE to Retry", (SCREEN_W // 2 - 120, 420),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.65, (200, 200, 200), 1)
+        cv2.putText(img, "Press B for Mode Select", (SCREEN_W // 2 - 125, 455),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (170, 170, 170), 1)
 
 
 def draw_all_clear(img, game):
@@ -1467,6 +1474,8 @@ def draw_all_clear(img, game):
     if blink:
         cv2.putText(img, "Press SPACE to Restart", (SCREEN_W // 2 - 125, 450),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.65, (200, 200, 200), 1)
+        cv2.putText(img, "Press B for Mode Select", (SCREEN_W // 2 - 125, 485),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (170, 170, 170), 1)
 
 
 # ══════════════════════════════════════════════
@@ -1958,6 +1967,9 @@ def main():
             elif key_ch == '\x1b' or key_ch == 'b':
                 if game.state == game.STAGE_SELECT:
                     game.state = game.TITLE
+                elif game.state in (game.STAGE_CLEAR, game.GAME_OVER, game.ALL_CLEAR):
+                    game.reset()
+                    print("[Mode Select]")
             elif key_ch == ' ':
                 if game.state == game.TITLE:
                     game.mode = game.selected_mode
