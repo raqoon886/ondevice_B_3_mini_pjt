@@ -69,6 +69,20 @@ GESTURE_COLOR = {
     'paper':    (80, 80, 255),
 }
 
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(SCRIPT_DIR, 'data')
+GESTURE_IMAGE = {}
+for gesture_name, filename in {
+        'scissors': 'scissors.png',
+        'rock':     'rock.png',
+        'paper':    'paper.png',
+    }.items():
+    image_path = os.path.join(DATA_DIR, filename)
+    if os.path.exists(image_path):
+        image = cv2.imread(image_path, cv2.IMREAD_UNCHANGED)
+        if image is not None:
+            GESTURE_IMAGE[gesture_name] = image
+
 SCORE_CORRECT = 200
 SCORE_BONUS_PER_COMBO = 30
 HOLD_TIME = 0.7           # 같은 제스처를 N초 이상 유지해야 확정 (시간 기반)
@@ -449,6 +463,30 @@ class GameState:
 #  UI (v1과 동일)
 # ══════════════════════════════════════════════
 def draw_gesture_icon(img, gesture, cx, cy, size, alpha=1.0, highlight=False):
+    icon = GESTURE_IMAGE.get(gesture)
+    if icon is not None:
+        icon_size = max(1, int(size * 2))
+        icon_resized = cv2.resize(icon, (icon_size, icon_size), interpolation=cv2.INTER_AREA)
+        x1 = cx - icon_size // 2
+        y1 = cy - icon_size // 2
+        x2 = x1 + icon_size
+        y2 = y1 + icon_size
+        x1i, y1i = max(0, x1), max(0, y1)
+        x2i, y2i = min(img.shape[1], x2), min(img.shape[0], y2)
+        ix1 = x1i - x1
+        iy1 = y1i - y1
+        ix2 = ix1 + (x2i - x1i)
+        iy2 = iy1 + (y2i - y1i)
+        roi = img[y1i:y2i, x1i:x2i]
+        icon_crop = icon_resized[iy1:iy2, ix1:ix2]
+        if icon_crop.shape[2] == 4:
+            alpha_mask = icon_crop[:, :, 3:] / 255.0
+            icon_rgb = icon_crop[:, :, :3]
+            roi[:] = (icon_rgb * alpha_mask + roi * (1 - alpha_mask)).astype(np.uint8)
+        else:
+            roi[:] = icon_crop
+        return
+
     color = GESTURE_COLOR.get(gesture, (200, 200, 200))
     if alpha < 1.0:
         color = tuple(int(c * alpha) for c in color)
