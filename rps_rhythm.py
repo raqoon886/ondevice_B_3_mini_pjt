@@ -706,7 +706,7 @@ def draw_hud(img, game):
     _heart_left = SCREEN_W - 28 * 5 - 5 - 12
     _mode_txt = GAME_MODES[game.mode]
     _mts = cv2.getTextSize(_mode_txt, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)[0]
-    cv2.putText(img, _mode_txt, (_heart_left - _mts[0], 22),
+    cv2.putText(img, _mode_txt, (_heart_left - _mts[0], 34),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, mode_hud_colors[game.mode], 1)
 
 
