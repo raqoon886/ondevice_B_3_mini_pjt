@@ -39,6 +39,11 @@ from cvzone.HandTrackingModule import HandDetector
 from ai_edge_litert.interpreter import Interpreter
 
 try:
+    import tkinter as tk
+except ImportError:
+    tk = None
+
+try:
     from ultralytics import YOLO
 except ImportError:
     YOLO = None
@@ -46,8 +51,8 @@ except ImportError:
 # ══════════════════════════════════════════════
 #  상수 & 설정
 # ══════════════════════════════════════════════
-SCREEN_W = 640
-SCREEN_H = 520
+SCREEN_W = 820
+SCREEN_H = 620
 CAM_W, CAM_H = 320, 240
 IMG_SIZE = 224
 OFFSET = 30
@@ -85,8 +90,8 @@ for gesture_name, filename in {
 
 SCORE_CORRECT = 200
 SCORE_BONUS_PER_COMBO = 30
-HOLD_TIME = 0.7           # 같은 제스처를 N초 이상 유지해야 확정 (시간 기반)
-COOLDOWN_TIME = 0.25      # 확정 후 다음 입력 받기까지 대기 (같은 제스처 연속 입력 가능)
+HOLD_TIME = 1.0           # 같은 제스처를 N초 이상 유지해야 확정 (시간 기반)
+COOLDOWN_TIME = 0.8     # 확정 후 다음 입력 받기까지 대기 (같은 제스처 연속 입력 가능)
 TIME_LIMIT_PER_NOTE = 8
 
 STAGES = [
@@ -608,57 +613,57 @@ def draw_judgment_effect(img, result, now, judge_time):
 def draw_title_screen(img):
     cv2.rectangle(img, (0, 0), (SCREEN_W, SCREEN_H), (20, 20, 40), -1)
     title = "RPS RHYTHM"
-    text_size = cv2.getTextSize(title, cv2.FONT_HERSHEY_SIMPLEX, 1.8, 3)[0]
-    cv2.putText(img, title, (SCREEN_W//2 - text_size[0]//2, 180),
-                cv2.FONT_HERSHEY_SIMPLEX, 1.8, (0, 255, 255), 3)
+    text_size = cv2.getTextSize(title, cv2.FONT_HERSHEY_SIMPLEX, 2.4, 4)[0]
+    cv2.putText(img, title, (SCREEN_W//2 - text_size[0]//2, 190),
+                cv2.FONT_HERSHEY_SIMPLEX, 2.4, (0, 255, 255), 4)
     sub = "Faster Detection, Smoother Gameplay"
-    text_size = cv2.getTextSize(sub, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1)[0]
-    cv2.putText(img, sub, (SCREEN_W//2 - text_size[0]//2, 220),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 1)
-    icons_y = 290
+    text_size = cv2.getTextSize(sub, cv2.FONT_HERSHEY_SIMPLEX, 0.75, 1)[0]
+    cv2.putText(img, sub, (SCREEN_W//2 - text_size[0]//2, 250),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.75, (200, 200, 200), 1)
+    icons_y = 340
     for i, g in enumerate(GESTURES):
-        cx = SCREEN_W // 2 + (i - 1) * 100
-        draw_gesture_icon(img, g, cx, icons_y, 35)
-        cv2.putText(img, GESTURE_KR[g], (cx - 35, icons_y + 55),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+        cx = SCREEN_W // 2 + (i - 1) * 140
+        draw_gesture_icon(img, g, cx, icons_y, 45)
+        cv2.putText(img, GESTURE_KR[g], (cx - 45, icons_y + 70),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (200, 200, 200), 1)
     blink = int(time.time() * 2) % 2
     if blink:
         start_text = "Press SPACE to Start"
-        text_size = cv2.getTextSize(start_text, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)[0]
-        cv2.putText(img, start_text, (SCREEN_W//2 - text_size[0]//2, 420),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+        text_size = cv2.getTextSize(start_text, cv2.FONT_HERSHEY_SIMPLEX, 1.0, 2)[0]
+        cv2.putText(img, start_text, (SCREEN_W//2 - text_size[0]//2, 460),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
 
 
 def draw_memorize_screen(img, game, now):
     elapsed = now - game.memorize_start
     remaining = game.preview_time() - elapsed
-    cv2.putText(img, "MEMORIZE!", (SCREEN_W // 2 - 80, 35),
-                cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 200, 0), 2)
-    bar_w = 300
+    cv2.putText(img, "MEMORIZE!", (SCREEN_W // 2 - 120, 90),
+                cv2.FONT_HERSHEY_SIMPLEX, 1.3, (255, 200, 0), 2)
+    bar_w = 380
     bar_x = SCREEN_W // 2 - bar_w // 2
     progress = max(0, remaining / game.preview_time())
-    cv2.rectangle(img, (bar_x, 485), (bar_x + bar_w, 500), (60, 60, 60), -1)
-    cv2.rectangle(img, (bar_x, 485), (bar_x + int(bar_w * progress), 500), (0, 200, 255), -1)
-    cv2.putText(img, f"{remaining:.1f}s", (bar_x + bar_w + 10, 498),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+    cv2.rectangle(img, (bar_x, 520), (bar_x + bar_w, 540), (60, 60, 60), -1)
+    cv2.rectangle(img, (bar_x, 520), (bar_x + int(bar_w * progress), 540), (0, 200, 255), -1)
+    cv2.putText(img, f"{remaining:.1f}s", (bar_x + bar_w + 15, 535),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
     n = len(game.sequence)
-    total_w = n * 70
-    start_x = SCREEN_W // 2 - total_w // 2 + 35
+    total_w = n * 100
+    start_x = SCREEN_W // 2 - total_w // 2 + 50
     for i, gesture in enumerate(game.sequence):
-        cx = start_x + i * 70
-        cy = 300
+        cx = start_x + i * 100
+        cy = 360
         progress_ratio = elapsed / game.preview_time()
         if progress_ratio >= i / n:
             age = (progress_ratio - i / n) * game.preview_time()
             scale = min(1.0, age * 3)
-            r = int(30 * scale)
+            r = int(45 * scale)
             draw_gesture_icon(img, gesture, cx, cy, r, highlight=True)
-            cv2.putText(img, str(i + 1), (cx - 5, cy + 50),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 180, 180), 1)
+            cv2.putText(img, str(i + 1), (cx - 7, cy + 65),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (180, 180, 180), 2)
         else:
-            cv2.circle(img, (cx, cy), 30, (50, 50, 50), 2)
-            cv2.putText(img, "?", (cx - 7, cy + 8),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (80, 80, 80), 2)
+            cv2.circle(img, (cx, cy), 40, (50, 50, 50), 2)
+            cv2.putText(img, "?", (cx - 10, cy + 12),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (80, 80, 80), 2)
 
 
 def draw_countdown(img, game, now):
@@ -839,6 +844,18 @@ def main():
 
     cv2.namedWindow('RPS Rhythm', cv2.WINDOW_NORMAL)
     cv2.resizeWindow('RPS Rhythm', SCREEN_W, SCREEN_H)
+    if tk is not None:
+        try:
+            root = tk.Tk()
+            root.withdraw()
+            screen_w = root.winfo_screenwidth()
+            screen_h = root.winfo_screenheight()
+            root.destroy()
+            x = max(0, (screen_w - SCREEN_W) // 2)
+            y = max(0, (screen_h - SCREEN_H) // 2)
+            cv2.moveWindow('RPS Rhythm', x, y)
+        except Exception:
+            pass
 
     kb = KeyboardReader()
     kb.start()
@@ -1030,7 +1047,7 @@ def main():
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, (220, 220, 220), 1)
                         cv2.putText(screen, f"#{game.current_note + 1}/{len(game.sequence)}",
                             (cam_x + CAM_W + 10, 325),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180, 180, 180), 1)
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (220, 220, 220), 2)
 
                     if confirmed:
                         if detected == target:
